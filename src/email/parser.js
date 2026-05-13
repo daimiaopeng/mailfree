@@ -29,12 +29,12 @@ export async function parseEmailBody(raw) {
  */
 export function extractVerificationCode({ subject = '', text = '', html = '' } = {}) {
   const subjectText = String(subject || '');
-  const textBody = String(text || '');
-  const htmlBody = stripHtml(html);
+  const textBody = String(text || '').replace(/\s+/g, ' ').trim();
+  const htmlBody = stripHtml(html).replace(/\s+/g, ' ').trim();
 
   const sources = {
     subject: subjectText,
-    body: `${textBody} ${htmlBody}`.trim()
+    body: (textBody || htmlBody || '').trim()
   };
 
   const minLen = 4;
@@ -63,8 +63,8 @@ export function extractVerificationCode({ subject = '', text = '', html = '' } =
   }
 
   const bodyOrdereds = [
-    new RegExp(`${kw}[^\n\r\d]{0,30}(?<!\\d)${codeChunk}(?!\\d)`, 'i'),
-    new RegExp(`(?<!\\d)${codeChunk}(?!\\d)[^\n\r\d]{0,30}${kw}`, 'i'),
+    new RegExp(`${kw}[\\s\\S]{0,30}?(?<!\\d)${codeChunk}(?!\\d)`, 'i'),
+    new RegExp(`(?<!\\d)${codeChunk}(?!\\d)[\\s\\S]{0,30}?${kw}`, 'i'),
   ];
   for (const r of bodyOrdereds) {
     const m = sources.body.match(r);
@@ -75,8 +75,8 @@ export function extractVerificationCode({ subject = '', text = '', html = '' } =
   }
 
   const looseBodyOrdereds = [
-    new RegExp(`${kw}[^\n\r\d]{0,80}(?<!\\d)${codeChunk}(?!\\d)`, 'i'),
-    new RegExp(`(?<!\\d)${codeChunk}(?!\\d)[^\n\r\d]{0,80}${kw}`, 'i'),
+    new RegExp(`${kw}[\\s\\S]{0,80}?(?<!\\d)${codeChunk}(?!\\d)`, 'i'),
+    new RegExp(`(?<!\\d)${codeChunk}(?!\\d)[\\s\\S]{0,80}?${kw}`, 'i'),
   ];
   for (const r of looseBodyOrdereds) {
     const m = sources.body.match(r);

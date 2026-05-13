@@ -8,6 +8,26 @@ export const COOKIE_NAME = 'iding-session';
 // 默认会话过期时间（天）
 const DEFAULT_SESSION_EXPIRE_DAYS = 7;
 
+// CryptoKey 缓存（全局共享，避免每次请求重复 importKey）
+const keyCache = new Map();
+
+async function getOrImportKey(secret, usage) {
+  const k = String(secret || '');
+  for (const [cacheKey, entry] of keyCache) {
+    if (entry.secret === k && entry.usage === usage) {
+      return cacheKey;
+    }
+  }
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw', encoder.encode(k),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false, [usage]
+  );
+  keyCache.set(key, { secret: k, usage });
+  return key;
+}
+
 /**
  * 获取会话过期秒数
  * @param {number|string} days - 过期天数
@@ -32,13 +52,7 @@ export async function createJwt(secret, extraPayload = {}, expireDays = DEFAULT_
   const payload = { exp: Math.floor(Date.now() / 1000) + expireSeconds, ...extraPayload };
   const encoder = new TextEncoder();
   const data = base64UrlEncode(JSON.stringify(header)) + '.' + base64UrlEncode(JSON.stringify(payload));
-  const key = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign']
-  );
+  const key = await getOrImportKey(secret, 'sign');
   const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(data));
   return data + '.' + base64UrlEncode(new Uint8Array(signature));
 }
@@ -58,13 +72,7 @@ export async function verifyJwt(secret, cookieHeader) {
   if (parts.length !== 3) return false;
   try {
     const encoder = new TextEncoder();
-    const key = await crypto.subtle.importKey(
-      'raw',
-      encoder.encode(secret),
-      { name: 'HMAC', hash: 'SHA-256' },
-      false,
-      ['verify']
-    );
+    const key = await getOrImportKey(secret, 'verify');
     const valid = await crypto.subtle.verify('HMAC', key, base64UrlDecode(parts[2]), encoder.encode(parts[0] + '.' + parts[1]));
     if (!valid) return false;
     const payload = JSON.parse(new TextDecoder().decode(base64UrlDecode(parts[1])));
@@ -246,15 +254,9 @@ export function checkRootAdminOverride(request, JWT_TOKEN) {
     if (!JWT_TOKEN) return null;
     const auth = request.headers.get('Authorization') || request.headers.get('authorization') || '';
     const xToken = request.headers.get('X-Admin-Token') || request.headers.get('x-admin-token') || '';
-    let urlToken = '';
-    try {
-      const u = new URL(request.url);
-      urlToken = u.searchParams.get('admin_token') || '';
-    } catch (_) { }
     const bearer = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
     if (bearer && bearer === JWT_TOKEN) return { role: 'admin', username: '__root__', userId: 0 };
     if (xToken && xToken === JWT_TOKEN) return { role: 'admin', username: '__root__', userId: 0 };
-    if (urlToken && urlToken === JWT_TOKEN) return { role: 'admin', username: '__root__', userId: 0 };
     return null;
   } catch (_) {
     return null;

@@ -31,36 +31,23 @@ export function renderEmailDetail(email) {
     content = `<pre style="white-space: pre-wrap; word-break: break-word;">${escapeHtml(email.content || '')}</pre>`;
   }
   
+  let metaHtml = `<div class="email-meta-inline">`;
+  metaHtml += `<span>发件人：${sender}</span>`;
+  if (to) metaHtml += `<span>收件人：${to}</span>`;
+  metaHtml += `<span>${receivedAt}</span>`;
+  metaHtml += `</div>`;
+
+  let codeHtml = '';
+  if (verificationCode) {
+    codeHtml = `<div class="code-highlight" onclick="navigator.clipboard.writeText('${escapeAttr(verificationCode)}')" title="点击复制" style="cursor:pointer">${escapeHtml(verificationCode)}</div>`;
+  }
+
   return `
-    <div class="email-detail">
-      <div class="detail-header">
-        <h2 class="detail-subject">${subject}</h2>
-        <div class="detail-meta">
-          <div class="meta-row">
-            <span class="meta-label">发件人：</span>
-            <span class="meta-value">${sender}</span>
-          </div>
-          ${to ? `
-            <div class="meta-row">
-              <span class="meta-label">收件人：</span>
-              <span class="meta-value">${to}</span>
-            </div>
-          ` : ''}
-          <div class="meta-row">
-            <span class="meta-label">时间：</span>
-            <span class="meta-value">${receivedAt}</span>
-          </div>
-          ${verificationCode ? `
-            <div class="meta-row verification-code">
-              <span class="meta-label">验证码：</span>
-              <span class="meta-value code-value" title="点击复制">${escapeHtml(verificationCode)}</span>
-            </div>
-          ` : ''}
-        </div>
-      </div>
-      <div class="detail-body">
-        ${content}
-      </div>
+    <div class="email-detail-container">
+      <h2 style="font-size:18px;font-weight:700;color:var(--text);word-break:break-all;padding:0 4px">${subject}</h2>
+      ${metaHtml}
+      ${codeHtml}
+      ${content}
     </div>
   `;
 }
@@ -130,16 +117,11 @@ export function renderEmailModal(email) {
       <h3 class="modal-title">${subject}</h3>
       <button class="modal-close" data-action="close">&times;</button>
     </div>
-    <div class="modal-meta">
-      <p><strong>发件人：</strong>${sender}</p>
-      ${to ? `<p><strong>收件人：</strong>${to}</p>` : ''}
-      <p><strong>时间：</strong>${receivedAt}</p>
-      ${verificationCode ? `
-        <p class="verification-code">
-          <strong>验证码：</strong>
-          <span class="code-value" data-code="${escapeAttr(verificationCode)}" title="点击复制">${escapeHtml(verificationCode)}</span>
-        </p>
-      ` : ''}
+    <div class="email-meta-inline">
+      <span>发件人：${sender}</span>
+      ${to ? `<span>收件人：${to}</span>` : ''}
+      <span>${receivedAt}</span>
+      ${verificationCode ? `<span class="code-highlight" data-code="${escapeAttr(verificationCode)}" title="点击复制" style="cursor:pointer">验证码：${escapeHtml(verificationCode)}</span>` : ''}
     </div>
     <div class="modal-body">
       ${content}

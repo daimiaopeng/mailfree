@@ -3,7 +3,7 @@
  * @module modules/app/compose
  */
 
-import { escapeHtml } from './ui-helpers.js';
+import { escapeHtml, escapeAttr } from './ui-helpers.js';
 import { getCurrentMailbox } from './mailbox-state.js';
 
 /**
@@ -132,18 +132,26 @@ export function showSentEmailDetail(email, elements) {
   const statusInfo = statusMap[status] || { class: '', text: status };
   statusBadge = `<span class="status-badge ${statusInfo.class}">${statusInfo.text}</span>`;
   
-  modalContent.innerHTML = `
-    <div class="sent-detail">
-      <div class="detail-meta">
-        <div class="meta-row"><span class="meta-label">收件人：</span><span class="meta-value">${escapeHtml(recipients)}</span></div>
-        <div class="meta-row"><span class="meta-label">状态：</span>${statusBadge}</div>
-        <div class="meta-row"><span class="meta-label">发送时间：</span><span class="meta-value">${escapeHtml(e.created_at || '')}</span></div>
-      </div>
-      <div class="detail-content">
-        ${e.html_content ? e.html_content : `<pre>${escapeHtml(e.text_content || '')}</pre>`}
-      </div>
-    </div>
-  `;
+  let timeStr = '';
+  if (e.created_at) {
+    const d = new Date((e.created_at.includes('T') ? e.created_at : e.created_at.replace(' ', 'T')) + 'Z');
+    timeStr = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false, year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(d);
+  }
+
+  let metaHtml = `<div class="email-meta-inline">`;
+  if (recipients) metaHtml += `<span>收件人：${escapeHtml(recipients)}</span>`;
+  metaHtml += `<span>${statusBadge}</span>`;
+  if (timeStr) metaHtml += `<span>${timeStr}</span>`;
+  metaHtml += `</div>`;
+
+  let bodyHtml = '';
+  if (e.html_content) {
+    bodyHtml = `<div class="email-content-area"><iframe srcdoc="${escapeAttr(e.html_content)}" sandbox="allow-same-origin allow-popups" style="width:100%;min-height:400px;border:none;display:block"></iframe></div>`;
+  } else {
+    bodyHtml = `<div class="email-content-area"><pre class="email-content-text" style="white-space:pre-wrap;word-break:break-word">${escapeHtml(e.text_content || '')}</pre></div>`;
+  }
+
+  modalContent.innerHTML = `<div class="email-detail-container">${metaHtml}${bodyHtml}</div>`;
   
   modal.classList.add('show');
 }

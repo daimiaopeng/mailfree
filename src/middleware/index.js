@@ -3,7 +3,6 @@
  * @module middleware
  */
 
-export { Router } from './router.js';
 export {
   COOKIE_NAME,
   createJwt,
@@ -14,6 +13,7 @@ export {
   hashPassword,
   verifyJwtWithCache,
   checkRootAdminOverride,
-  resolveAuthPayload,
-  authMiddleware
+  resolveAuthPayload
 } from './auth.js';
+
+export { authMiddleware, rateLimiter } from './app.js';

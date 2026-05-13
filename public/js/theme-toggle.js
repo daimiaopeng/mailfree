@@ -4,16 +4,6 @@
    ============================================= */
 
 (function() {
-  // 主题样式表映射
-  const themeStylesheets = {
-    'app': '/css/app_black.css',
-    'login': '/css/login_black.css',
-    'admin': '/css/admin_black.css',
-    'mailbox': '/css/mailbox_black.css',
-    'mailboxes': '/css/mailboxes_black.css',
-    'app-mobile': '/css/app-mobile_black.css'
-  };
-
   // 当前主题
   let currentTheme = 'light';
 

@@ -106,3 +106,5 @@ test-eml.html
 wrangler-github.toml
 .gitignore
 wrangler-dev.toml
+findings.md
+progress.md
