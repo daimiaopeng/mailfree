@@ -4,7 +4,7 @@
  */
 
 import { Hono } from 'hono';
-import { getDatabaseWithValidation } from '../db/index.js';
+import { getInitializedDatabase } from '../db/index.js';
 import { handleApiRequest } from '../api/index.js';
 
 const router = new Hono();
@@ -30,7 +30,7 @@ router.post('/receive', async (c) => {
   const p = c.get('authPayload');
   if (!p) return c.text('Unauthorized', 401);
   let DB;
-  try { DB = await getDatabaseWithValidation(c.env); } catch (_) { return c.text('数据库连接失败', 500); }
+  try { DB = await getInitializedDatabase(c.env); } catch (_) { return c.text('数据库连接失败', 500); }
   const { handleEmailReceive } = await import('../email/receiver.js');
   return handleEmailReceive(c.req.raw, DB, c.env);
 });
@@ -38,7 +38,7 @@ router.post('/receive', async (c) => {
 router.all('/api/*', async (c) => {
   const authPayload = c.get('authPayload');
   let DB;
-  try { DB = await getDatabaseWithValidation(c.env); } catch (_) { return c.text('数据库连接失败', 500); }
+  try { DB = await getInitializedDatabase(c.env); } catch (_) { return c.text('数据库连接失败', 500); }
 
   const MAIL_DOMAINS = (c.env.MAIL_DOMAIN || 'temp.example.com').split(/[,\s]+/).map(d => d.trim()).filter(Boolean);
   const baseOpts = {

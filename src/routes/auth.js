@@ -4,7 +4,7 @@
  */
 
 import { Hono } from 'hono';
-import { getDatabaseWithValidation } from '../db/index.js';
+import { getInitializedDatabase } from '../db/index.js';
 import { createJwt, buildSessionCookie, verifyMailboxLogin, verifyPassword } from '../middleware/auth.js';
 import { rateLimiter } from '../middleware/app.js';
 
@@ -20,7 +20,7 @@ router.post('/api/logout', (c) => {
 router.post('/api/login', rateLimiter({ windowMs: 60_000, max: 10 }), async (c) => {
   let DB;
   try {
-    DB = await getDatabaseWithValidation(c.env);
+    DB = await getInitializedDatabase(c.env);
   } catch (_) {
     return c.text('数据库连接失败', 500);
   }

@@ -1,5 +1,6 @@
 -- Cloudflare D1 数据库初始化脚本
--- 首次部署时执行：wrangler d1 execute freemail --file=./d1-init.sql
+-- 首次部署时执行：wrangler d1 execute maill_free_db --file=./d1-init.sql
+-- 或修改 wrangler.toml 绑定后执行：wrangler d1 execute <database_name> --file=./d1-init.sql
 
 -- 启用外键约束
 PRAGMA foreign_keys = ON;

@@ -36,10 +36,14 @@ export async function getDatabaseWithValidation(env) {
 export async function getInitializedDatabase(env) {
   const db = await getDatabaseWithValidation(env);
   
-  // 缓存数据库初始化，避免每次请求重复执行
+  // 缓存数据库初始化，避免每次请求重复执行。按数据库 ID 区分缓存，切换数据库后不会复用。
   if (!globalThis.__DB_INITED__) {
+    globalThis.__DB_INITED__ = new Set();
+  }
+  const dbId = db.name || 'default';
+  if (!globalThis.__DB_INITED__.has(dbId)) {
     await initDatabase(db);
-    globalThis.__DB_INITED__ = true;
+    globalThis.__DB_INITED__.add(dbId);
   }
   
   return db;
