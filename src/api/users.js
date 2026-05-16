@@ -211,6 +211,9 @@ export async function handleUsersApi(request, db, url, path, options) {
   if (!isMock && request.method === 'GET' && path.startsWith('/api/users/') && path.endsWith('/mailboxes')) {
     const id = Number(path.split('/')[3]);
     if (!id) return errorResponse('无效ID', 400);
+    const payload = getJwtPayload(request, options);
+    const self = Number(payload?.userId || 0) === id;
+    if (!isStrictAdmin(request, options) && !self) return errorResponse('Forbidden', 403);
     try { const list = await getUserMailboxes(db, id); return Response.json(list || []); }
     catch (e) { return errorResponse('查询失败', 500); }
   }
