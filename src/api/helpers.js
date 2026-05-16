@@ -67,4 +67,107 @@ export function errorResponse(message, status = 400) {
   return new Response(message, { status });
 }
 
+/**
+ * 规范化邮箱地址，兼容 "Name <user@example.com>" 格式。
+ */
+export function normalizeEmailAddress(address) {
+  const s = String(address || '').trim().toLowerCase();
+  const m = s.match(/<([^>]+)>/);
+  return (m ? m[1] : s).trim();
+}
+
+/**
+ * 提取当前请求身份，并统一计算严格管理员和邮箱登录身份。
+ */
+export function getAuthContext(request, options = {}) {
+  const payload = getJwtPayload(request, options) || {};
+  return {
+    payload,
+    strictAdmin: isStrictAdmin(request, options),
+    role: payload.role || '',
+    userId: Number(payload.userId || 0),
+    mailboxId: Number(payload.mailboxId || 0),
+    mailboxAddress: normalizeEmailAddress(payload.mailboxAddress || '')
+  };
+}
+
+/**
+ * 校验当前身份是否能访问指定邮箱。
+ */
+export async function getMailboxAccess(db, request, options = {}, { mailboxId = null, address = '' } = {}) {
+  const ctx = getAuthContext(request, options);
+  let mailbox = null;
+
+  if (mailboxId) {
+    mailbox = await db.prepare('SELECT id, address FROM mailboxes WHERE id = ? LIMIT 1')
+      .bind(Number(mailboxId)).first();
+  } else {
+    const normalized = normalizeEmailAddress(address);
+    if (normalized) {
+      mailbox = await db.prepare('SELECT id, address FROM mailboxes WHERE address = ? LIMIT 1')
+        .bind(normalized).first();
+    }
+  }
+
+  if (!mailbox) {
+    return { exists: false, allowed: false, mailbox: null };
+  }
+
+  if (ctx.strictAdmin) {
+    return { exists: true, allowed: true, mailbox };
+  }
+
+  if (ctx.role === 'mailbox') {
+    const sameId = ctx.mailboxId && Number(mailbox.id) === ctx.mailboxId;
+    const sameAddress = ctx.mailboxAddress && normalizeEmailAddress(mailbox.address) === ctx.mailboxAddress;
+    return { exists: true, allowed: !!(sameId || sameAddress), mailbox };
+  }
+
+  if (ctx.userId) {
+    const own = await db.prepare(
+      'SELECT 1 FROM user_mailboxes WHERE user_id = ? AND mailbox_id = ? LIMIT 1'
+    ).bind(ctx.userId, Number(mailbox.id)).first();
+    return { exists: true, allowed: !!own, mailbox };
+  }
+
+  return { exists: true, allowed: false, mailbox };
+}
+
+/**
+ * 校验当前身份是否能访问指定邮件。
+ */
+export async function getMessageAccess(db, request, options = {}, messageId) {
+  const id = Number(messageId || 0);
+  if (!id) return { exists: false, allowed: false, message: null };
+
+  const message = await db.prepare('SELECT id, mailbox_id FROM messages WHERE id = ? LIMIT 1')
+    .bind(id).first();
+  if (!message) return { exists: false, allowed: false, message: null };
+
+  const access = await getMailboxAccess(db, request, options, { mailboxId: message.mailbox_id });
+  return { exists: true, allowed: access.allowed, message, mailbox: access.mailbox };
+}
+
+/**
+ * 校验当前身份是否能访问指定发件记录。
+ */
+export async function getSentEmailAccess(db, request, options = {}, identifier, by = 'id') {
+  const column = by === 'resend_id' ? 'resend_id' : 'id';
+  const value = by === 'resend_id' ? String(identifier || '') : Number(identifier || 0);
+  if (!value) return { exists: false, allowed: false, sent: null };
+
+  const sent = await db.prepare(
+    `SELECT id, resend_id, from_addr FROM sent_emails WHERE ${column} = ? LIMIT 1`
+  ).bind(value).first();
+  if (!sent) return { exists: false, allowed: false, sent: null };
+
+  const ctx = getAuthContext(request, options);
+  if (ctx.strictAdmin) {
+    return { exists: true, allowed: true, sent, mailbox: null };
+  }
+
+  const access = await getMailboxAccess(db, request, options, { address: sent.from_addr });
+  return { exists: true, allowed: access.allowed, sent, mailbox: access.mailbox };
+}
+
 export { sha256Hex };

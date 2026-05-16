@@ -3,7 +3,7 @@
  * @module api/mailboxes
  */
 
-import { getJwtPayload, isStrictAdmin, errorResponse } from './helpers.js';
+import { getJwtPayload, isStrictAdmin, getMailboxAccess, errorResponse } from './helpers.js';
 import { buildMockMailboxes, MOCK_DOMAINS } from './mock.js';
 import { extractEmail, generateRandomId } from '../utils/common.js';
 import { getCachedUserQuota, getCachedSystemStat } from '../utils/cache.js';
@@ -132,6 +132,8 @@ export async function handleMailboxesApi(request, db, mailDomains, url, path, op
       }
       
       const row = results[0];
+      const access = await getMailboxAccess(db, request, options, { mailboxId: row.id });
+      if (!access.allowed) return errorResponse('Forbidden', 403);
       return Response.json({
         id: row.id,
         address: row.address,
@@ -154,7 +156,7 @@ export async function handleMailboxesApi(request, db, mailDomains, url, path, op
       return Response.json({ limit: 999, used: 2, remaining: 997 });
     }
     
-    if (isStrictAdmin(request, options) || role === 'admin') {
+    if (isStrictAdmin(request, options)) {
       const totalMailboxes = await getCachedSystemStat(db, 'total_mailboxes', async () => {
         return await getTotalMailboxCount(db);
       });
@@ -421,6 +423,11 @@ export async function handleMailboxesApi(request, db, mailDomains, url, path, op
     }
     if (!uid) return errorResponse('未登录', 401);
     try {
+      if (!isStrictAdmin(request, options)) {
+        const access = await getMailboxAccess(db, request, options, { address });
+        if (!access.exists) return errorResponse('Not Found', 404);
+        if (!access.allowed) return errorResponse('Forbidden', 403);
+      }
       const result = await toggleMailboxPin(db, address, uid);
       return Response.json({ success: true, ...result });
     } catch (e) {
