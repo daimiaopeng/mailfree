@@ -1,38 +1,60 @@
-name: 🔄 Sync with Upstream
+name: Sync from idinging/freemail
 
 on:
-  schedule:
-    # 每天 UTC 时间 00:00 运行一次自动同步（北京时间早上 8:00）
-    - cron: '0 0 * * *'
-  # 允许在 GitHub Actions 页面手动点击运行
   workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * *"
+
+permissions:
+  contents: write
 
 jobs:
-  sync_with_upstream:
-    name: 🔄 Sync main with upstream latest
+  sync:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 🚚 Checkout target repo
+      - name: Checkout my repo
         uses: actions/checkout@v4
-
-      - name: 🔄 Sync Upstream
-        uses: aormsby/Fork-Sync-With-Upstream-action@v3.4
         with:
-          # 上游仓库的名称
-          upstream_sync_repo: idinging/freemail
-          # 上游想要同步的分支
-          upstream_sync_branch: master
-          # 自己仓库要被更新的分支
-          target_sync_branch: master
-          # 自动注入的 GitHub Token（需要赋予 Actions 读写权限）
-          target_repo_token: ${{ secrets.GITHUB_TOKEN }}
-          
-          # 设为 false 表示真正执行同步（如果设为 true 则只测试不推送）
-          test_mode: false
+          ref: main
+          fetch-depth: 0
 
-      - name: ❌ 通知同步失败 / Check for Failure
-        if: failure()
+      - name: Save my local config
         run: |
-          echo "❌ 同步失败！通常是因为你本地修改的文件与上游产生了冲突（Merge Conflicts）。"
-          echo "请在本地拉取代码并手动解决冲突后再次推送。"
+          mkdir -p /tmp/mailfree-backup
+
+          # 保留当前同步脚本，避免被上游仓库覆盖
+          cp .github/workflows/sync-upstream.yml /tmp/mailfree-backup/sync-upstream.yml
+
+          # 保留你自己的 Cloudflare 配置，里面有你自己的 D1 / R2 / 域名配置
+          cp wrangler.toml /tmp/mailfree-backup/wrangler.toml || true
+
+      - name: Sync upstream master to my main
+        run: |
+          set -e
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git remote add upstream https://github.com/idinging/freemail.git || git remote set-url upstream https://github.com/idinging/freemail.git
+          git fetch upstream master
+
+          git checkout main
+
+          # 用上游 master 覆盖当前 main
+          git reset --hard upstream/master
+
+          # 删除上游仓库里的 workflows，避免 GITHUB_TOKEN 没有 workflows 权限导致 push 失败
+          rm -rf .github/workflows
+          mkdir -p .github/workflows
+
+          # 恢复你自己的同步脚本
+          cp /tmp/mailfree-backup/sync-upstream.yml .github/workflows/sync-upstream.yml
+
+          # 恢复你自己的 wrangler.toml，避免 D1 database_id 又被上游覆盖
+          cp /tmp/mailfree-backup/wrangler.toml wrangler.toml || true
+
+          git add -A
+          git commit -m "Sync from idinging/freemail" || echo "No changes to commit"
+
+          git push origin main --force
