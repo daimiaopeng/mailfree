@@ -1,0 +1,65 @@
+name: Freemail API Tests
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+jobs:
+  api-tests:
+    name: Run Freemail API tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      # 必填：被测站点和普通测试账号。
+      FREEMAIL_BASE_URL: ${{ secrets.FREEMAIL_BASE_URL || vars.FREEMAIL_BASE_URL }}
+      FREEMAIL_TEST_USER: ${{ secrets.FREEMAIL_TEST_USER || vars.FREEMAIL_TEST_USER || 'test' }}
+      FREEMAIL_TEST_PASSWORD: ${{ secrets.FREEMAIL_TEST_PASSWORD || vars.FREEMAIL_TEST_PASSWORD }}
+
+      # 推荐：填一个“存在但不属于普通测试用户”的邮箱，用来检测 IDOR 是否回归。
+      FREEMAIL_PROBE_USER_IDS: ${{ secrets.FREEMAIL_PROBE_USER_IDS || vars.FREEMAIL_PROBE_USER_IDS || '1' }}
+      FREEMAIL_PROBE_MAILBOXES: ${{ secrets.FREEMAIL_PROBE_MAILBOXES || vars.FREEMAIL_PROBE_MAILBOXES }}
+
+      # 可选：管理员、guest、邮箱登录账号。配置后会自动覆盖对应接口。
+      FREEMAIL_ADMIN_USER: ${{ secrets.FREEMAIL_ADMIN_USER || vars.FREEMAIL_ADMIN_USER }}
+      FREEMAIL_ADMIN_PASSWORD: ${{ secrets.FREEMAIL_ADMIN_PASSWORD || vars.FREEMAIL_ADMIN_PASSWORD }}
+      FREEMAIL_GUEST_USER: ${{ secrets.FREEMAIL_GUEST_USER || vars.FREEMAIL_GUEST_USER || 'guest' }}
+      FREEMAIL_GUEST_PASSWORD: ${{ secrets.FREEMAIL_GUEST_PASSWORD || vars.FREEMAIL_GUEST_PASSWORD }}
+      FREEMAIL_MAILBOX_USER: ${{ secrets.FREEMAIL_MAILBOX_USER || vars.FREEMAIL_MAILBOX_USER }}
+      FREEMAIL_MAILBOX_PASSWORD: ${{ secrets.FREEMAIL_MAILBOX_PASSWORD || vars.FREEMAIL_MAILBOX_PASSWORD }}
+
+      # 默认 false，避免 CI 修改线上数据；需要覆盖写接口时在仓库变量或 Secrets 中设为 true。
+      FREEMAIL_ALLOW_MUTATION: ${{ secrets.FREEMAIL_ALLOW_MUTATION || vars.FREEMAIL_ALLOW_MUTATION || 'false' }}
+      FREEMAIL_ALLOW_READ_DETAILS: ${{ secrets.FREEMAIL_ALLOW_READ_DETAILS || vars.FREEMAIL_ALLOW_READ_DETAILS || 'false' }}
+      FREEMAIL_SAFE_TO_EMAIL: ${{ secrets.FREEMAIL_SAFE_TO_EMAIL || vars.FREEMAIL_SAFE_TO_EMAIL }}
+
+      FREEMAIL_API_JSON_OUT: reports/freemail-api-tests.json
+      FREEMAIL_API_JUNIT_OUT: reports/freemail-api-tests.xml
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check test script syntax
+        run: python -m py_compile security/freemail_api_tests.py
+
+      - name: Run API integration tests
+        run: |
+          export FREEMAIL_API_MARKDOWN_OUT="$GITHUB_STEP_SUMMARY"
+          python security/freemail_api_tests.py
+
+      - name: Upload API test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: freemail-api-test-reports
+          path: reports/
+          if-no-files-found: warn
