@@ -330,8 +330,7 @@
 .mailbox-display-section{
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  justify-content: space-between;
+  gap: 18px;
   min-height: 280px;
   min-width: 0;
 }
@@ -388,6 +387,13 @@
   justify-content: center;
   backdrop-filter: var(--blur-sm);
   -webkit-backdrop-filter: var(--blur-sm);
+}
+
+.email-text{
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.45;
 }
 
 .custom-overlay{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; gap:12px; background: rgba(255,255,255,0.75); backdrop-filter: blur(2px); padding:12px; }
