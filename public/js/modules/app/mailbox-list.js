@@ -28,12 +28,19 @@ export function renderMailboxItem(mailbox, isActive = false) {
   const activeClass = isActive ? 'active' : '';
   const time = formatTs(m.created_at);
   const pinIcon = m.is_pinned ? IconHelper.pin(16, 16) : IconHelper.pin(16, 16);
+  const note = escapeHtml(m.note || m.purpose || '');
+  const tags = String(m.tags || '').split(',').map(t => t.trim()).filter(Boolean).slice(0, 3);
+  const tagHtml = tags.length
+    ? `<div class="mailbox-tags">${tags.map(t => `<span class="mailbox-tag">${escapeHtml(t)}</span>`).join('')}</div>`
+    : '';
 
   return `
     <div class="mailbox-item ${isPinned} ${activeClass}" onclick="selectMailbox('${address}')">
       <div class="mailbox-content">
         <span class="address">${displayAddress}</span>
         <span class="time">${time}</span>
+        ${note ? `<span class="mailbox-note">${note}</span>` : ''}
+        ${tagHtml}
       </div>
       <div class="mailbox-actions">
         <button class="btn btn-ghost btn-sm pin" onclick="togglePin(event,'${address}')" title="${m.is_pinned ? '取消置顶' : '置顶'}" aria-label="${m.is_pinned ? '取消置顶' : '置顶'}">${pinIcon}</button>
@@ -188,7 +195,12 @@ export function getLastCount() {
 export function filterBySearch(mailboxes, term) {
   if (!term || !term.trim()) return mailboxes;
   const lowerTerm = term.toLowerCase().trim();
-  return mailboxes.filter(m => (m.address || '').toLowerCase().includes(lowerTerm));
+  return mailboxes.filter(m => [
+    m.address,
+    m.note,
+    m.tags,
+    m.purpose
+  ].some(value => String(value || '').toLowerCase().includes(lowerTerm)));
 }
 
 export default {

@@ -20,13 +20,18 @@ CREATE TABLE IF NOT EXISTS mailboxes (
   expires_at      TEXT,
   is_pinned       INTEGER DEFAULT 0,
   forward_to      TEXT    DEFAULT NULL,
-  is_favorite     INTEGER DEFAULT 0
+  is_favorite     INTEGER DEFAULT 0,
+  note            TEXT    DEFAULT '',
+  tags            TEXT    DEFAULT '',
+  purpose         TEXT    DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_mailboxes_address          ON mailboxes(address);
 CREATE INDEX IF NOT EXISTS idx_mailboxes_is_pinned        ON mailboxes(is_pinned DESC);
 CREATE INDEX IF NOT EXISTS idx_mailboxes_is_favorite      ON mailboxes(is_favorite DESC);
 CREATE INDEX IF NOT EXISTS idx_mailboxes_address_created  ON mailboxes(address, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mailboxes_domain           ON mailboxes(domain);
+CREATE INDEX IF NOT EXISTS idx_mailboxes_expires_at       ON mailboxes(expires_at);
 
 -- ────────────────────────────────────────
 -- 邮件消息表
@@ -107,3 +112,23 @@ CREATE TABLE IF NOT EXISTS sent_emails (
 CREATE INDEX IF NOT EXISTS idx_sent_emails_resend_id      ON sent_emails(resend_id);
 CREATE INDEX IF NOT EXISTS idx_sent_emails_status_created ON sent_emails(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sent_emails_from_addr      ON sent_emails(from_addr);
+
+-- ────────────────────────────────────────
+-- 审计日志表
+-- ────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  actor_role      TEXT,
+  actor_user_id   INTEGER,
+  actor_username  TEXT,
+  action          TEXT    NOT NULL,
+  target_type     TEXT,
+  target_id       TEXT,
+  target_address  TEXT,
+  metadata        TEXT,
+  ip              TEXT,
+  created_at      TEXT    DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_action  ON audit_logs(action, created_at DESC);

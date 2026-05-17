@@ -170,4 +170,38 @@ export async function getSentEmailAccess(db, request, options = {}, identifier, 
   return { exists: true, allowed: access.allowed, sent, mailbox: access.mailbox };
 }
 
+/**
+ * 记录审计日志。审计失败不影响主业务，避免迁移窗口期阻塞线上请求。
+ */
+export async function logAuditEvent(db, request, options = {}, event = {}) {
+  if (!db || !event?.action) return;
+  try {
+    const payload = getJwtPayload(request, options) || {};
+    const ip = request?.headers?.get?.('CF-Connecting-IP')
+      || request?.headers?.get?.('X-Forwarded-For')
+      || '';
+    const metadata = event.metadata == null
+      ? null
+      : JSON.stringify(event.metadata).slice(0, 4000);
+
+    await db.prepare(`
+      INSERT INTO audit_logs (
+        actor_role, actor_user_id, actor_username,
+        action, target_type, target_id, target_address,
+        metadata, ip
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      String(payload.role || ''),
+      payload.userId ? Number(payload.userId) : null,
+      String(payload.username || payload.mailboxAddress || ''),
+      String(event.action || '').slice(0, 120),
+      event.targetType ? String(event.targetType).slice(0, 80) : null,
+      event.targetId == null ? null : String(event.targetId).slice(0, 120),
+      event.targetAddress ? normalizeEmailAddress(event.targetAddress).slice(0, 320) : null,
+      metadata,
+      String(ip || '').slice(0, 200)
+    ).run();
+  } catch (_) { }
+}
+
 export { sha256Hex };

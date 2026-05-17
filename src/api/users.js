@@ -3,7 +3,7 @@
  * @module api/users
  */
 
-import { getJwtPayload, isStrictAdmin, sha256Hex, jsonResponse, errorResponse } from './helpers.js';
+import { getJwtPayload, isStrictAdmin, sha256Hex, jsonResponse, logAuditEvent, errorResponse } from './helpers.js';
 import { initMockUsers, buildMockMailboxes, MOCK_DOMAINS } from './mock.js';
 import {
   listUsersWithCounts,
@@ -156,6 +156,12 @@ export async function handleUsersApi(request, db, url, path, options) {
       let passwordHash = null;
       if (password) { passwordHash = await sha256Hex(password); }
       const user = await createUser(db, { username, passwordHash, role, mailboxLimit });
+      await logAuditEvent(db, request, options, {
+        action: 'user.create',
+        targetType: 'user',
+        targetId: user?.id,
+        metadata: { username, role, mailboxLimit }
+      });
       return Response.json(user);
     } catch (e) { return errorResponse('创建失败: ' + (e?.message || e), 500); }
   }
@@ -172,6 +178,12 @@ export async function handleUsersApi(request, db, url, path, options) {
       if (typeof body.can_send !== 'undefined') fields.can_send = body.can_send ? 1 : 0;
       if (typeof body.password === 'string' && body.password) { fields.password_hash = await sha256Hex(String(body.password)); }
       await updateUser(db, id, fields);
+      await logAuditEvent(db, request, options, {
+        action: 'user.update',
+        targetType: 'user',
+        targetId: id,
+        metadata: { ...fields, password_hash: fields.password_hash ? '[updated]' : undefined }
+      });
       return Response.json({ success: true });
     } catch (e) { return errorResponse('更新失败: ' + (e?.message || e), 500); }
   }
@@ -180,7 +192,15 @@ export async function handleUsersApi(request, db, url, path, options) {
     if (!isStrictAdmin(request, options)) return errorResponse('Forbidden', 403);
     const id = Number(path.split('/')[3]);
     if (!id) return errorResponse('无效ID', 400);
-    try { await deleteUser(db, id); return Response.json({ success: true }); }
+    try {
+      await deleteUser(db, id);
+      await logAuditEvent(db, request, options, {
+        action: 'user.delete',
+        targetType: 'user',
+        targetId: id
+      });
+      return Response.json({ success: true });
+    }
     catch (e) { return errorResponse('删除失败: ' + (e?.message || e), 500); }
   }
   
@@ -192,6 +212,12 @@ export async function handleUsersApi(request, db, url, path, options) {
       const address = String(body.address || '').trim().toLowerCase();
       if (!username || !address) return errorResponse('参数不完整', 400);
       const result = await assignMailboxToUser(db, { username, address });
+      await logAuditEvent(db, request, options, {
+        action: 'user.mailbox.assign',
+        targetType: 'mailbox',
+        targetAddress: address,
+        metadata: { username }
+      });
       return Response.json(result);
     } catch (e) { return errorResponse('分配失败: ' + (e?.message || e), 500); }
   }
@@ -204,6 +230,12 @@ export async function handleUsersApi(request, db, url, path, options) {
       const address = String(body.address || '').trim().toLowerCase();
       if (!username || !address) return errorResponse('参数不完整', 400);
       const result = await unassignMailboxFromUser(db, { username, address });
+      await logAuditEvent(db, request, options, {
+        action: 'user.mailbox.unassign',
+        targetType: 'mailbox',
+        targetAddress: address,
+        metadata: { username }
+      });
       return Response.json(result);
     } catch (e) { return errorResponse('取消分配失败: ' + (e?.message || e), 500); }
   }

@@ -3,7 +3,7 @@
  * @module api/mailboxAdmin
  */
 
-import { getJwtPayload, isStrictAdmin, sha256Hex, errorResponse } from './helpers.js';
+import { getJwtPayload, isStrictAdmin, sha256Hex, logAuditEvent, errorResponse } from './helpers.js';
 import { invalidateMailboxCache, invalidateSystemStatCache } from '../utils/cache.js';
 import { getMailboxIdByAddress } from '../db/index.js';
 import {
@@ -57,6 +57,13 @@ export async function handleMailboxAdminApi(request, db, url, path, options) {
         invalidateSystemStatCache('total_mailboxes');
       }
 
+      await logAuditEvent(db, request, options, {
+        action: 'mailbox.delete',
+        targetType: 'mailbox',
+        targetId: mailboxId,
+        targetAddress: normalized,
+        metadata: { deleted }
+      });
       return Response.json({ success: deleted, deleted });
     } catch (e) {
       try { await db.exec('ROLLBACK'); } catch (_) { }
@@ -72,6 +79,11 @@ export async function handleMailboxAdminApi(request, db, url, path, options) {
       const address = String(url.searchParams.get('address') || '').trim().toLowerCase();
       if (!address) return errorResponse('缺少 address 参数', 400);
       await db.prepare('UPDATE mailboxes SET password_hash = NULL WHERE address = ?').bind(address).run();
+      await logAuditEvent(db, request, options, {
+        action: 'mailbox.password.reset',
+        targetType: 'mailbox',
+        targetAddress: address
+      });
       return Response.json({ success: true });
     } catch (e) { return errorResponse('重置失败', 500); }
   }
@@ -95,6 +107,12 @@ export async function handleMailboxAdminApi(request, db, url, path, options) {
       await db.prepare('UPDATE mailboxes SET can_login = ? WHERE address = ?')
         .bind(canLogin ? 1 : 0, address).run();
 
+      await logAuditEvent(db, request, options, {
+        action: 'mailbox.login.toggle',
+        targetType: 'mailbox',
+        targetAddress: address,
+        metadata: { can_login: canLogin }
+      });
       return Response.json({ success: true, can_login: canLogin });
     } catch (e) {
       return errorResponse('操作失败: ' + e.message, 500);
@@ -123,6 +141,11 @@ export async function handleMailboxAdminApi(request, db, url, path, options) {
       await db.prepare('UPDATE mailboxes SET password_hash = ? WHERE address = ?')
         .bind(newPasswordHash, address).run();
 
+      await logAuditEvent(db, request, options, {
+        action: 'mailbox.password.change_by_admin',
+        targetType: 'mailbox',
+        targetAddress: address
+      });
       return Response.json({ success: true });
     } catch (e) {
       return errorResponse('操作失败: ' + e.message, 500);
@@ -229,13 +252,19 @@ export async function handleMailboxAdminApi(request, db, url, path, options) {
         }
       }
 
-      return Response.json({
+      const responseBody = {
         success: true,
         success_count: successCount,
         fail_count: failCount,
         total: addresses.length,
         results
+      };
+      await logAuditEvent(db, request, options, {
+        action: 'mailbox.login.batch_toggle',
+        targetType: 'mailbox',
+        metadata: { can_login: canLogin, successCount, failCount, total: addresses.length }
       });
+      return Response.json(responseBody);
     } catch (e) {
       return errorResponse('操作失败: ' + e.message, 500);
     }
@@ -250,7 +279,12 @@ export async function handleMailboxAdminApi(request, db, url, path, options) {
       role: payload.role === 'admin' && isStrictAdmin(request, options) ? 'strictAdmin' : payload.role,
       mailboxId: payload.mailboxId
     } : null;
-    return await handleSetForward(request, { TEMP_MAIL_DB: db });
+    const result = await handleSetForward(request, { TEMP_MAIL_DB: db });
+    await logAuditEvent(db, request, options, {
+      action: 'mailbox.forward.update',
+      targetType: 'mailbox'
+    });
+    return result;
   }
 
   if (path === '/api/mailbox/favorite' && request.method === 'POST') {
@@ -261,7 +295,12 @@ export async function handleMailboxAdminApi(request, db, url, path, options) {
       role: payload.role === 'admin' && isStrictAdmin(request, options) ? 'strictAdmin' : payload.role,
       mailboxId: payload.mailboxId
     } : null;
-    return await handleToggleFavorite(request, { TEMP_MAIL_DB: db });
+    const result = await handleToggleFavorite(request, { TEMP_MAIL_DB: db });
+    await logAuditEvent(db, request, options, {
+      action: 'mailbox.favorite.toggle',
+      targetType: 'mailbox'
+    });
+    return result;
   }
 
   if (path === '/api/mailboxes/batch-favorite' && request.method === 'POST') {
@@ -342,6 +381,12 @@ export async function handleMailboxAdminApi(request, db, url, path, options) {
       await db.prepare('UPDATE mailboxes SET password_hash = ? WHERE id = ?')
         .bind(newPasswordHash, mailboxId).run();
 
+      await logAuditEvent(db, request, options, {
+        action: 'mailbox.password.change_self',
+        targetType: 'mailbox',
+        targetId: mailboxId,
+        targetAddress: mailboxAddress
+      });
       return Response.json({ success: true, message: '密码修改成功' });
 
     } catch (error) {

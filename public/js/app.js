@@ -69,7 +69,13 @@ const els = {
   sidebarToggle: document.getElementById('sidebar-toggle'), sidebarToggleIcon: document.getElementById('sidebar-toggle-icon'),
   sidebar: document.querySelector('.sidebar'), container: document.querySelector('.container'),
   forwardSetting: document.getElementById('forward-setting'), toggleFavorite: document.getElementById('toggle-favorite'),
-  favoriteIcon: document.getElementById('favorite-icon'), favoriteText: document.getElementById('favorite-text')
+  favoriteIcon: document.getElementById('favorite-icon'), favoriteText: document.getElementById('favorite-text'),
+  mailboxMetaPanel: document.getElementById('mailbox-meta-panel'), mailboxNote: document.getElementById('mailbox-note'),
+  mailboxTags: document.getElementById('mailbox-tags'), mailboxPurpose: document.getElementById('mailbox-purpose'),
+  mailboxExpires: document.getElementById('mailbox-expires'), saveMailboxMeta: document.getElementById('save-mailbox-meta'),
+  emailFilters: document.getElementById('email-filters'), emailSearch: document.getElementById('email-search'),
+  filterUnread: document.getElementById('filter-unread'), filterCode: document.getElementById('filter-code'),
+  filterAttachment: document.getElementById('filter-attachment'), copyLatestCode: document.getElementById('copy-latest-code')
 };
 const lenRange = document.getElementById('len-range'), lenVal = document.getElementById('len-val'), domainSelect = document.getElementById('domain-select');
 
@@ -81,9 +87,34 @@ const showToast = window.showToast || ((msg, type) => console.log(`[${type}] ${m
 // 刷新状态
 const REFRESH_INTERVAL = 15;
 let countdown = REFRESH_INTERVAL;
+let lastInboxEmails = [];
 function showHeaderLoading(t) { if (els.listLoading) { els.listLoading.innerHTML = `<span class="spinner"></span>${t || '加载中…'}`; els.listLoading.style.display = 'flex'; }}
 function hideHeaderLoading() { if (els.listLoading) els.listLoading.style.display = 'none'; }
 function showCountdown() { if (els.listLoading) { els.listLoading.innerHTML = `<span class="countdown-icon">⏱</span>${countdown}s 后刷新`; els.listLoading.style.display = 'flex'; }}
+
+function buildInboxQuery(mailbox) {
+  const params = new URLSearchParams({ mailbox });
+  const q = (els.emailSearch?.value || '').trim();
+  if (q) params.set('q', q);
+  if (els.filterUnread?.checked) params.set('unread', 'true');
+  if (els.filterCode?.checked) params.set('code', 'true');
+  if (els.filterAttachment?.checked) params.set('attachment', 'true');
+  return `/api/emails?${params.toString()}`;
+}
+
+function isoToLocalDateTime(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const pad = n => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function localDateTimeToIso(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
 
 // 刷新邮件列表
 async function refresh() {
@@ -92,10 +123,11 @@ async function refresh() {
   try {
     showHeaderLoading(isFirstLoad() ? '加载中…' : '正在更新…');
     if (isFirstLoad() && els.list) els.list.innerHTML = '';
-    const url = !isSentViewActive() ? `/api/emails?mailbox=${encodeURIComponent(mailbox)}` : `/api/sent?from=${encodeURIComponent(mailbox)}`;
+    const url = !isSentViewActive() ? buildInboxQuery(mailbox) : `/api/sent?from=${encodeURIComponent(mailbox)}`;
     const ctrl = new AbortController(); const timeout = setTimeout(() => ctrl.abort(), 8000);
     let emails = [];
     try { const r = await api(url, { signal: ctrl.signal }); emails = await r.json(); } finally { clearTimeout(timeout); }
+    if (!isSentViewActive()) lastInboxEmails = Array.isArray(emails) ? emails : [];
     if (!Array.isArray(emails) || !emails.length) {
       els.list.innerHTML = `<div class="empty-state">
         <svg class="empty-icon" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -138,6 +170,61 @@ function updateMailboxInfoUI(info) {
     els.favoriteIcon.innerHTML = IconHelper.star(18, 18, info.is_favorite);
     els.favoriteText.textContent = info.is_favorite ? '已收藏' : '收藏邮箱';
   }
+  if (els.mailboxMetaPanel) els.mailboxMetaPanel.style.display = 'grid';
+  if (els.mailboxNote) els.mailboxNote.value = info.note || '';
+  if (els.mailboxTags) els.mailboxTags.value = info.tags || '';
+  if (els.mailboxPurpose) els.mailboxPurpose.value = info.purpose || '';
+  if (els.mailboxExpires) els.mailboxExpires.value = isoToLocalDateTime(info.expires_at);
+}
+
+async function saveMailboxMeta() {
+  const info = getCurrentMailboxInfo();
+  const address = getCurrentMailbox();
+  if (!info?.id && !address) {
+    showToast('请先选择一个邮箱', 'warn');
+    return;
+  }
+  const body = {
+    address: info?.address || address,
+    note: els.mailboxNote?.value || '',
+    tags: els.mailboxTags?.value || '',
+    purpose: els.mailboxPurpose?.value || '',
+    expires_at: localDateTimeToIso(els.mailboxExpires?.value || '')
+  };
+  try {
+    const r = await api('/api/mailbox/info', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const updated = await r.json();
+    setCurrentMailboxInfo(updated);
+    updateMailboxInfoUI(updated);
+    showToast('邮箱信息已保存', 'success');
+    await loadMailboxes({ forceFresh: true });
+  } catch (e) {
+    showToast(e.message || '保存失败', 'error');
+  }
+}
+
+async function copyLatestCode() {
+  const latest = lastInboxEmails.find(email => {
+    const raw = `${email.verification_code || ''} ${email.preview || ''} ${email.subject || ''}`;
+    return (email.verification_code || '').toString().trim() || extractCode(raw);
+  });
+  if (!latest) {
+    showToast('当前列表没有验证码', 'warn');
+    return;
+  }
+  const raw = `${latest.verification_code || ''} ${latest.preview || ''} ${latest.subject || ''}`;
+  const code = (latest.verification_code || '').toString().trim() || extractCode(raw);
+  try {
+    await navigator.clipboard.writeText(code);
+    showToast(`已复制验证码：${code}`, 'success');
+  } catch (_) {
+    showToast('复制失败', 'error');
+  }
 }
 
 // 全局函数
@@ -157,6 +244,23 @@ if (els.genName) els.genName.onclick = () => generateNameMailbox(els, lenRange, 
 if (els.copy) els.copy.onclick = () => copyMailboxAddress(showToast);
 if (els.clear) els.clear.onclick = () => clearAllEmails(api, showToast, showConfirm, refresh);
 if (els.refresh) els.refresh.onclick = refresh;
+if (els.saveMailboxMeta) els.saveMailboxMeta.onclick = saveMailboxMeta;
+if (els.copyLatestCode) els.copyLatestCode.onclick = copyLatestCode;
+if (els.emailFilters) els.emailFilters.style.display = 'flex';
+{
+  let filterTimer = null;
+  const scheduleFilterRefresh = () => {
+    if (filterTimer) clearTimeout(filterTimer);
+    filterTimer = setTimeout(() => {
+      resetPager(els);
+      refresh();
+    }, 250);
+  };
+  els.emailSearch?.addEventListener('input', scheduleFilterRefresh);
+  els.filterUnread?.addEventListener('change', scheduleFilterRefresh);
+  els.filterCode?.addEventListener('change', scheduleFilterRefresh);
+  els.filterAttachment?.addEventListener('change', scheduleFilterRefresh);
+}
 if (els.logout) els.logout.addEventListener('click', async () => {
   try { await fetch('/api/logout', { method: 'POST' }); } catch(_) {}
   location.replace('/html/login.html');
@@ -165,8 +269,8 @@ if (els.modalClose) els.modalClose.onclick = () => els.modal?.classList.remove('
 els.modal?.addEventListener('click', (e) => { if (e.target === els.modal) els.modal.classList.remove('show'); });
 
 // 视图切换
-if (els.tabInbox) els.tabInbox.onclick = () => { setView(false); els.tabInbox.classList.add('active'); els.tabSent?.classList.remove('active'); if (els.boxTitle) els.boxTitle.textContent = '收件箱'; if (els.boxIcon) els.boxIcon.textContent = '📥'; resetPager(els); refresh(); };
-if (els.tabSent) els.tabSent.onclick = () => { setView(true); els.tabSent.classList.add('active'); els.tabInbox?.classList.remove('active'); if (els.boxTitle) els.boxTitle.textContent = '发件箱'; if (els.boxIcon) els.boxIcon.textContent = '📤'; resetPager(els); refresh(); };
+if (els.tabInbox) els.tabInbox.onclick = () => { setView(false); els.tabInbox.classList.add('active'); els.tabSent?.classList.remove('active'); if (els.boxTitle) els.boxTitle.textContent = '收件箱'; if (els.boxIcon) els.boxIcon.textContent = '📥'; if (els.emailFilters) els.emailFilters.style.display = 'flex'; resetPager(els); refresh(); };
+if (els.tabSent) els.tabSent.onclick = () => { setView(true); els.tabSent.classList.add('active'); els.tabInbox?.classList.remove('active'); if (els.boxTitle) els.boxTitle.textContent = '发件箱'; if (els.boxIcon) els.boxIcon.textContent = '📤'; if (els.emailFilters) els.emailFilters.style.display = 'none'; resetPager(els); refresh(); };
 
 // 分页
 if (els.prevPage) els.prevPage.onclick = () => prevPage(refresh);

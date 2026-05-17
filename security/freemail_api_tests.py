@@ -339,6 +339,7 @@ def test_user_readonly(cases: list[CaseResult], args: argparse.Namespace) -> tup
         own = ctx.owned_mailboxes[0]
         expect_status(cases, client, "本人邮箱信息", "GET", "/api/mailbox/info", {200}, params={"address": own})
         emails = expect_status(cases, client, "本人邮件列表", "GET", "/api/emails", {200}, params={"mailbox": own, "limit": 5})
+        expect_status(cases, client, "本人邮件筛选：未读/验证码/附件", "GET", "/api/emails", {200}, params={"mailbox": own, "limit": 5, "unread": "true", "code": "true", "attachment": "false"})
         ctx.email_ids = collect_email_ids(emails)
         sent = expect_status(cases, client, "本人发件记录", "GET", "/api/sent", {200}, params={"from": own, "limit": 5})
         ctx.sent_ids, ctx.resend_ids = collect_sent(sent)
@@ -485,6 +486,7 @@ def test_user_mutation(cases: list[CaseResult], args: argparse.Namespace) -> Tes
         for method, path, name in [
             ("GET", "/api/generate", "生成随机邮箱"),
             ("POST", "/api/create", "创建自定义邮箱"),
+            ("PATCH", "/api/mailbox/info", "更新邮箱备注标签"),
             ("POST", "/api/mailboxes/pin", "切换邮箱置顶"),
             ("POST", "/api/mailbox/forward", "设置邮箱转发"),
             ("POST", "/api/mailbox/favorite", "切换邮箱收藏"),
@@ -518,6 +520,7 @@ def test_user_mutation(cases: list[CaseResult], args: argparse.Namespace) -> Tes
     mailbox = ctx.generated_mailboxes[0]
     expect_status(cases, client, "切换邮箱置顶", "POST", "/api/mailboxes/pin", {200}, params={"address": mailbox})
     info = expect_status(cases, client, "新邮箱信息", "GET", "/api/mailbox/info", {200}, params={"address": mailbox})
+    expect_status(cases, client, "更新邮箱备注标签", "PATCH", "/api/mailbox/info", {200}, json_body={"address": mailbox, "note": "CI 接口测试邮箱", "tags": ["ci", "api"], "purpose": "自动化回归", "ttlHours": 24})
     mailbox_id = info.json_data.get("id") if is_json_object(info) else None
     if mailbox_id:
         expect_status(cases, client, "设置邮箱转发", "POST", "/api/mailbox/forward", {200}, json_body={"mailbox_id": mailbox_id, "forward_to": ""})
@@ -534,6 +537,8 @@ def test_admin(cases: list[CaseResult], args: argparse.Namespace, generated_mail
     if not args.admin_username or not args.admin_password:
         for method, path, name in [
             ("GET", "/api/users", "管理员用户列表"),
+            ("GET", "/api/system/health", "管理员健康检查"),
+            ("GET", "/api/audit/logs", "管理员审计日志"),
             ("POST", "/api/users", "管理员创建用户"),
             ("PATCH", "/api/users/:id", "管理员更新用户"),
             ("DELETE", "/api/users/:id", "管理员删除用户"),
@@ -547,6 +552,7 @@ def test_admin(cases: list[CaseResult], args: argparse.Namespace, generated_mail
             ("POST", "/api/mailboxes/batch-forward", "管理员批量转发"),
             ("POST", "/api/mailboxes/batch-favorite-by-address", "管理员按地址批量收藏"),
             ("POST", "/api/mailboxes/batch-forward-by-address", "管理员按地址批量转发"),
+            ("POST", "/api/maintenance/cleanup", "管理员清理过期邮箱"),
             ("DELETE", "/api/mailboxes", "管理员删除邮箱"),
         ]:
             skip_case(cases, name, method, path, "未配置管理员账号：FREEMAIL_ADMIN_USER/FREEMAIL_ADMIN_PASSWORD")
@@ -558,6 +564,8 @@ def test_admin(cases: list[CaseResult], args: argparse.Namespace, generated_mail
 
     expect_status(cases, client, "管理员用户列表", "GET", "/api/users", {200}, params={"limit": 20, "offset": 0})
     expect_status(cases, client, "管理员邮箱列表", "GET", "/api/mailboxes", {200}, params={"limit": 20, "offset": 0})
+    expect_status(cases, client, "管理员健康检查", "GET", "/api/system/health", {200})
+    expect_status(cases, client, "管理员审计日志", "GET", "/api/audit/logs", {200}, params={"limit": 10, "offset": 0})
 
     if args.probe_user_ids:
         expect_status(cases, client, "管理员读取用户邮箱", "GET", f"/api/users/{args.probe_user_ids[0]}/mailboxes", {200, 404})
@@ -565,7 +573,10 @@ def test_admin(cases: list[CaseResult], args: argparse.Namespace, generated_mail
         skip_case(cases, "管理员读取用户邮箱", "GET", "/api/users/:id/mailboxes", "未配置 FREEMAIL_PROBE_USER_IDS")
 
     if not args.allow_mutation:
+        skip_case(cases, "管理员清理过期邮箱", "POST", "/api/maintenance/cleanup", "默认安全模式跳过清理接口；需要时设置 FREEMAIL_ALLOW_MUTATION=true")
         return
+
+    expect_status(cases, client, "管理员清理过期邮箱", "POST", "/api/maintenance/cleanup", {200})
 
     test_user = f"ci-user-{int(time.time())}-{random.randint(1000, 9999)}"
     test_pass = random_local("pw")

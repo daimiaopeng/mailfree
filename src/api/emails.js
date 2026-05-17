@@ -3,7 +3,7 @@
  * @module api/emails
  */
 
-import { getMailboxAccess, getMessageAccess, errorResponse } from './helpers.js';
+import { getMailboxAccess, getMessageAccess, logAuditEvent, errorResponse } from './helpers.js';
 import { buildMockEmails, buildMockEmailDetail } from './mock.js';
 import { extractEmail } from '../utils/common.js';
 import { getMailboxIdByAddress } from '../db/index.js';
@@ -15,6 +15,32 @@ function mailboxOnlyTimeFilter(enabled) {
   return {
     sql: ' AND received_at >= ?',
     params: [new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()]
+  };
+}
+
+function buildEmailQueryFilter(url) {
+  const parts = [];
+  const params = [];
+  const q = String(url.searchParams.get('q') || '').trim();
+  const unread = url.searchParams.get('unread');
+  const code = url.searchParams.get('code');
+  const attachment = url.searchParams.get('attachment');
+
+  if (q) {
+    const like = `%${q}%`;
+    parts.push('(sender LIKE ? OR to_addrs LIKE ? OR subject LIKE ? OR COALESCE(preview, \'\') LIKE ? OR COALESCE(verification_code, \'\') LIKE ?)');
+    params.push(like, like, like, like, like);
+  }
+  if (unread === 'true' || unread === '1') parts.push('(is_read = 0 OR is_read IS NULL)');
+  else if (unread === 'false' || unread === '0') parts.push('is_read = 1');
+  if (code === 'true' || code === '1') parts.push("(verification_code IS NOT NULL AND verification_code != '')");
+  else if (code === 'false' || code === '0') parts.push("(verification_code IS NULL OR verification_code = '')");
+  if (attachment === 'true' || attachment === '1') parts.push("(r2_object_key IS NOT NULL AND r2_object_key != '')");
+  else if (attachment === 'false' || attachment === '0') parts.push("(r2_object_key IS NULL OR r2_object_key = '')");
+
+  return {
+    sql: parts.length ? ' AND ' + parts.join(' AND ') : '',
+    params
   };
 }
 
@@ -53,15 +79,16 @@ export async function handleEmailsApi(request, db, url, path, options) {
       if (!access.allowed) return errorResponse('Forbidden', 403);
 
       const filter = mailboxOnlyTimeFilter(isMailboxOnly);
+      const queryFilter = buildEmailQueryFilter(url);
       const limit = Math.min(parseInt(url.searchParams.get('limit') || '20', 10), 50);
       try {
         const { results } = await db.prepare(`
-          SELECT id, sender, to_addrs, subject, received_at, is_read, preview, verification_code
+          SELECT id, sender, to_addrs, subject, received_at, is_read, preview, verification_code, r2_object_key
           FROM messages
-          WHERE mailbox_id = ?${filter.sql}
+          WHERE mailbox_id = ?${filter.sql}${queryFilter.sql}
           ORDER BY received_at DESC
           LIMIT ?
-        `).bind(mailboxId, ...filter.params, limit).all();
+        `).bind(mailboxId, ...filter.params, ...queryFilter.params, limit).all();
         return Response.json(results || []);
       } catch (_) {
         const { results } = await db.prepare(`
@@ -142,6 +169,13 @@ export async function handleEmailsApi(request, db, url, path, options) {
         }
       }
 
+      await logAuditEvent(db, request, options, {
+        action: 'email.clear_mailbox',
+        targetType: 'mailbox',
+        targetId: mailboxId,
+        targetAddress: normalized,
+        metadata: { deletedCount }
+      });
       return Response.json({ success: true, deletedCount });
     } catch (e) {
       console.error('清空邮件失败:', e);
@@ -237,6 +271,12 @@ export async function handleEmailsApi(request, db, url, path, options) {
         }
       }
 
+      await logAuditEvent(db, request, options, {
+        action: 'email.delete',
+        targetType: 'email',
+        targetId: emailId,
+        metadata: { deleted }
+      });
       return Response.json({
         success: true,
         deleted,
