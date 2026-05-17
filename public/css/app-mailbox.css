@@ -630,11 +630,13 @@ select:disabled{
 }
 
 .mailbox-meta-panel{
+  grid-column: 1 / -1;
   display: grid;
-  gap: 14px;
-  padding: 18px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 14px;
   border: 1px solid rgba(99, 102, 241, 0.16);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(248, 250, 252, 0.82)),
     radial-gradient(circle at 0% 0%, rgba(99, 102, 241, 0.12), transparent 38%),
@@ -652,62 +654,19 @@ select:disabled{
   background: var(--primary-gradient);
 }
 
-.mailbox-meta-header{
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.mailbox-meta-kicker{
-  margin: 0 0 3px;
-  color: var(--primary);
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.mailbox-meta-title{
-  margin: 0;
-  color: var(--text);
-  font-size: 18px;
-  font-weight: 800;
-  letter-spacing: -0.02em;
-}
-
-.mailbox-meta-badge{
-  display: inline-flex;
-  align-items: center;
-  flex: 0 0 auto;
-  padding: 6px 10px;
-  border: 1px solid rgba(99, 102, 241, 0.18);
-  border-radius: var(--radius-full);
-  background: rgba(99, 102, 241, 0.08);
-  color: var(--primary);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.mailbox-meta-hint{
-  margin: -6px 0 0;
-  color: var(--text-muted);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
 .mailbox-meta-grid{
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: minmax(160px, 1.4fr) repeat(3, minmax(120px, 1fr));
+  gap: 10px;
+  align-items: end;
 }
 
 .mailbox-meta-panel .meta-field{
-  gap: 7px;
+  gap: 5px;
 }
 
 .mailbox-meta-panel .meta-field-wide{
-  grid-column: 1 / -1;
+  grid-column: auto;
 }
 
 .mailbox-meta-panel .config-label{
@@ -730,8 +689,8 @@ select:disabled{
 
 .mailbox-meta-panel .meta-input{
   width: 100%;
-  min-height: 44px;
-  padding: 11px 13px;
+  min-height: 40px;
+  padding: 9px 11px;
   border: 1px solid rgba(148, 163, 184, 0.26);
   border-radius: var(--radius-md);
   background: rgba(255, 255, 255, 0.82);
@@ -741,7 +700,7 @@ select:disabled{
 }
 
 .mailbox-meta-panel .meta-textarea{
-  min-height: 74px;
+  min-height: 40px;
   resize: vertical;
 }
 
@@ -762,11 +721,13 @@ select:disabled{
 }
 
 .mailbox-meta-save{
-  width: 100%;
-  height: 48px;
+  width: auto;
+  min-width: 136px;
+  height: 40px;
+  align-self: end;
   justify-content: center;
   border-radius: var(--radius-md);
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 800;
 }
 
@@ -779,16 +740,10 @@ select:disabled{
   box-shadow: 0 22px 50px rgba(0, 0, 0, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
-:root.dark .mailbox-meta-title,
 :root.dark .mailbox-meta-panel .config-label{
   color: #f8fafc;
 }
 
-:root.dark .mailbox-meta-hint{
-  color: #94a3b8;
-}
-
-:root.dark .mailbox-meta-badge,
 :root.dark .mailbox-meta-panel .label-icon{
   background: rgba(129, 140, 248, 0.14);
   border-color: rgba(129, 140, 248, 0.2);
@@ -811,21 +766,25 @@ select:disabled{
 @media (max-width: 960px){
   .mailbox-meta-panel{
     padding: 16px;
+    grid-template-columns: 1fr;
   }
 
   .mailbox-meta-grid{
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mailbox-meta-panel .meta-field-wide{
+    grid-column: 1 / -1;
+  }
+
+  .mailbox-meta-save{
+    width: 100%;
   }
 }
 
 @media (max-width: 640px){
-  .mailbox-meta-header{
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .mailbox-meta-title{
-    font-size: 16px;
+  .mailbox-meta-grid{
+    grid-template-columns: 1fr;
   }
 
   .mailbox-meta-panel .meta-input{
