@@ -3,7 +3,7 @@
  * @module api/send
  */
 
-import { getJwtPayload, isStrictAdmin, getMailboxAccess, getSentEmailAccess, errorResponse } from './helpers.js';
+import { getJwtPayload, isStrictAdmin, getMailboxAccess, getSentEmailAccess, logAuditEvent, errorResponse } from './helpers.js';
 import { getCachedSystemStat } from '../utils/cache.js';
 import { recordSentEmail, updateSentEmail } from '../db/index.js';
 import {
@@ -102,6 +102,12 @@ export async function handleSendApi(request, db, url, path, options) {
       if (!access.allowed) return errorResponse('Forbidden', 403);
 
       await db.prepare('DELETE FROM sent_emails WHERE id = ?').bind(id).run();
+      await logAuditEvent(db, request, options, {
+        action: 'sent.delete',
+        targetType: 'sent_email',
+        targetId: id,
+        targetAddress: access.sent?.from_addr || null
+      });
       return Response.json({ success: true });
     } catch (e) {
       return errorResponse('删除发件记录失败: ' + e.message, 500);
@@ -131,6 +137,13 @@ export async function handleSendApi(request, db, url, path, options) {
         text: sendPayload.text,
         status: 'delivered',
         scheduledAt: sendPayload.scheduledAt || null
+      });
+      await logAuditEvent(db, request, options, {
+        action: 'send.email',
+        targetType: 'sent_email',
+        targetId: result.id || null,
+        targetAddress: sendPayload.from,
+        metadata: { to: sendPayload.to, subject: sendPayload.subject, scheduledAt: sendPayload.scheduledAt || null }
       });
       return Response.json({ success: true, id: result.id });
     } catch (e) {
@@ -172,6 +185,11 @@ export async function handleSendApi(request, db, url, path, options) {
           });
         }
       } catch (_) { }
+      await logAuditEvent(db, request, options, {
+        action: 'send.batch',
+        targetType: 'sent_email',
+        metadata: { count: items.length }
+      });
       return Response.json({ success: true, result });
     } catch (e) {
       return errorResponse('批量发送失败: ' + e.message, 500);
@@ -212,6 +230,13 @@ export async function handleSendApi(request, db, url, path, options) {
         data = await updateEmailInResend(RESEND_API_KEY, { id, scheduledAt: body.scheduledAt });
         await updateSentEmail(db, id, { scheduled_at: body.scheduledAt });
       }
+      await logAuditEvent(db, request, options, {
+        action: 'send.update',
+        targetType: 'sent_email',
+        targetId: id,
+        targetAddress: access.sent?.from_addr || null,
+        metadata: body || {}
+      });
       return Response.json(data || { ok: true });
     } catch (e) {
       return errorResponse('更新失败: ' + e.message, 500);
@@ -229,6 +254,12 @@ export async function handleSendApi(request, db, url, path, options) {
 
       const data = await cancelEmailInResend(RESEND_API_KEY, id);
       await updateSentEmail(db, id, { status: 'canceled' });
+      await logAuditEvent(db, request, options, {
+        action: 'send.cancel',
+        targetType: 'sent_email',
+        targetId: id,
+        targetAddress: access.sent?.from_addr || null
+      });
       return Response.json(data);
     } catch (e) {
       return errorResponse('取消失败: ' + e.message, 500);

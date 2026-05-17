@@ -213,6 +213,25 @@
                   </div>
                 </div>
               </div>
+              <div id="mailbox-meta-panel" class="mailbox-meta-panel" style="display:none">
+                <div class="config-item">
+                  <label class="config-label" for="mailbox-note">邮箱备注</label>
+                  <input id="mailbox-note" class="input" type="text" maxlength="500" placeholder="例如：GitHub 注册、客户演示、自动化测试" />
+                </div>
+                <div class="config-item">
+                  <label class="config-label" for="mailbox-tags">标签</label>
+                  <input id="mailbox-tags" class="input" type="text" maxlength="200" placeholder="逗号分隔，例如：注册,QA,临时" />
+                </div>
+                <div class="config-item">
+                  <label class="config-label" for="mailbox-purpose">用途</label>
+                  <input id="mailbox-purpose" class="input" type="text" maxlength="120" placeholder="这个邮箱主要用来做什么" />
+                </div>
+                <div class="config-item">
+                  <label class="config-label" for="mailbox-expires">过期时间</label>
+                  <input id="mailbox-expires" class="input" type="datetime-local" />
+                </div>
+                <button id="save-mailbox-meta" class="btn btn-secondary btn-sm" type="button">保存邮箱信息</button>
+              </div>
                <div class="generate-action">
                  <div class="generate-buttons" style="display: flex; gap: 8px; margin-bottom: 8px; width: 100%;">
                    <button id="gen" class="btn btn-generate" style="flex: 1;" aria-label="随机生成邮箱">
@@ -256,6 +275,13 @@
             <div id="list-spinner" class="spinner"></div>
             <span id="list-status-text">加载中…</span>
           </div>
+        </div>
+        <div id="email-filters" class="email-filters" style="display:none">
+          <input id="email-search" class="input email-filter-search" type="search" placeholder="搜索发件人、主题、预览或验证码" />
+          <label class="filter-chip"><input id="filter-unread" type="checkbox" /> 未读</label>
+          <label class="filter-chip"><input id="filter-code" type="checkbox" /> 有验证码</label>
+          <label class="filter-chip"><input id="filter-attachment" type="checkbox" /> 有附件</label>
+          <button id="copy-latest-code" class="btn btn-secondary btn-sm" type="button">复制最新验证码</button>
         </div>
         <div class="list-viewport" style="position:relative;contain:layout paint;isolation:isolate;">
           <div id="list" class="list"></div>

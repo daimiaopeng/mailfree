@@ -21,7 +21,8 @@ router.post('/api/login', rateLimiter({ windowMs: 60_000, max: 10 }), async (c) 
   let DB;
   try {
     DB = await getInitializedDatabase(c.env);
-  } catch (_) {
+  } catch (error) {
+    console.error('登录时数据库初始化失败:', error?.message || error);
     return c.text('数据库连接失败', 500);
   }
 

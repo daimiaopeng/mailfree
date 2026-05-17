@@ -772,6 +772,48 @@ curl "https://your.domain/api/session?admin_token=<JWT_TOKEN>"
 
 ---
 
+## 邮箱运营增强接口
+
+### PATCH /api/mailbox/info
+更新当前用户有权限访问的邮箱备注、标签、用途和过期时间。
+
+**请求参数：**
+```json
+{
+  "address": "test@example.com",
+  "note": "GitHub 注册",
+  "tags": ["注册", "QA"],
+  "purpose": "自动化测试",
+  "expires_at": "2026-06-01T00:00:00.000Z"
+}
+```
+
+**返回：**
+```json
+{
+  "id": 1,
+  "address": "test@example.com",
+  "note": "GitHub 注册",
+  "tags": "注册,QA",
+  "purpose": "自动化测试",
+  "expires_at": "2026-06-01T00:00:00.000Z"
+}
+```
+
+### GET /api/emails
+收件箱列表支持额外筛选参数：`q`、`unread=true`、`code=true`、`attachment=true`。
+
+### GET /api/system/health
+严格管理员健康检查，返回 D1/R2/Resend 配置状态、域名列表、用户/邮箱/邮件/发件统计和过期邮箱数量。
+
+### GET /api/audit/logs
+严格管理员审计日志查询，支持 `limit`、`offset`、`action`。
+
+### POST /api/maintenance/cleanup
+严格管理员清理已过期邮箱及其邮件。该接口会删除数据，建议只在确认后或定时任务中调用。
+
+---
+
 ## 系统接口
 
 ### POST /receive

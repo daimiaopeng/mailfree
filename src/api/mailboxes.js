@@ -3,17 +3,182 @@
  * @module api/mailboxes
  */
 
-import { getJwtPayload, isStrictAdmin, getMailboxAccess, errorResponse } from './helpers.js';
+import { getJwtPayload, isStrictAdmin, getMailboxAccess, logAuditEvent, errorResponse } from './helpers.js';
 import { buildMockMailboxes, MOCK_DOMAINS } from './mock.js';
 import { extractEmail, generateRandomId } from '../utils/common.js';
 import { getCachedUserQuota, getCachedSystemStat } from '../utils/cache.js';
 import {
   getOrCreateMailboxId,
+  getMailboxIdByAddress,
   toggleMailboxPin,
   getTotalMailboxCount,
   assignMailboxToUser
 } from '../db/index.js';
 import { handleMailboxAdminApi } from './mailboxAdmin.js';
+
+function clampText(value, max = 300) {
+  return String(value || '').trim().slice(0, max);
+}
+
+function normalizeTags(value) {
+  const list = Array.isArray(value)
+    ? value
+    : String(value || '').split(/[,，\s]+/);
+  return Array.from(new Set(
+    list.map(item => String(item || '').trim()).filter(Boolean).slice(0, 12)
+  )).join(',');
+}
+
+function parseExpiresAtFromInput(value) {
+  if (value === null || value === '') return null;
+  if (!value) return undefined;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return undefined;
+  return date.toISOString();
+}
+
+function parseTtlExpiresAt(value) {
+  const hours = Number(value || 0);
+  if (!Number.isFinite(hours) || hours <= 0) return undefined;
+  const cappedHours = Math.min(hours, 24 * 365);
+  return new Date(Date.now() + cappedHours * 60 * 60 * 1000).toISOString();
+}
+
+function buildMailboxMeta(input = {}) {
+  const meta = {};
+  if (Object.prototype.hasOwnProperty.call(input, 'note')) meta.note = clampText(input.note, 500);
+  if (Object.prototype.hasOwnProperty.call(input, 'tags')) meta.tags = normalizeTags(input.tags);
+  if (Object.prototype.hasOwnProperty.call(input, 'purpose')) meta.purpose = clampText(input.purpose, 120);
+
+  const expiresAt = parseExpiresAtFromInput(input.expires_at ?? input.expiresAt);
+  if (expiresAt !== undefined) meta.expires_at = expiresAt;
+
+  const ttlExpiresAt = parseTtlExpiresAt(input.ttlHours ?? input.ttl_hours);
+  if (ttlExpiresAt) meta.expires_at = ttlExpiresAt;
+  return meta;
+}
+
+async function updateMailboxMeta(db, mailboxId, meta) {
+  const fields = [];
+  const params = [];
+  for (const key of ['note', 'tags', 'purpose', 'expires_at']) {
+    if (Object.prototype.hasOwnProperty.call(meta, key)) {
+      fields.push(`${key} = ?`);
+      params.push(meta[key]);
+    }
+  }
+  if (!fields.length) return;
+  params.push(Number(mailboxId));
+  await db.prepare(`UPDATE mailboxes SET ${fields.join(', ')} WHERE id = ?`).bind(...params).run();
+}
+
+function mailboxInfoResponse(row, fallbackAddress = '') {
+  return {
+    id: row?.id ?? null,
+    address: row?.address || fallbackAddress,
+    is_favorite: !!row?.is_favorite,
+    forward_to: row?.forward_to || null,
+    can_login: !!row?.can_login,
+    note: row?.note || '',
+    tags: row?.tags || '',
+    purpose: row?.purpose || '',
+    expires_at: row?.expires_at || null,
+    is_expired: !!(row?.expires_at && new Date(row.expires_at).getTime() <= Date.now())
+  };
+}
+
+function addMailboxListFilters(url, whereConditions, bindParams) {
+  const searchParam = url.searchParams.get('q');
+  const domainParam = url.searchParams.get('domain');
+  const loginParam = url.searchParams.get('login');
+  const favoriteParam = url.searchParams.get('favorite');
+  const forwardParam = url.searchParams.get('forward');
+  const tagParam = url.searchParams.get('tag');
+  const purposeParam = url.searchParams.get('purpose');
+  const expiredParam = url.searchParams.get('expired');
+
+  if (searchParam && searchParam.trim()) {
+    const q = `%${searchParam.trim().toLowerCase()}%`;
+    whereConditions.push('(m.address LIKE ? OR COALESCE(m.note, \'\') LIKE ? OR COALESCE(m.tags, \'\') LIKE ? OR COALESCE(m.purpose, \'\') LIKE ?)');
+    bindParams.push(q, q, q, q);
+  }
+  if (domainParam) {
+    whereConditions.push('m.domain = ?');
+    bindParams.push(domainParam);
+  }
+  if (loginParam === 'true' || loginParam === '1' || loginParam === 'allowed') {
+    whereConditions.push('m.can_login = 1');
+  } else if (loginParam === 'false' || loginParam === '0' || loginParam === 'denied') {
+    whereConditions.push('(m.can_login = 0 OR m.can_login IS NULL)');
+  }
+  if (favoriteParam === 'true' || favoriteParam === '1' || favoriteParam === 'favorite') {
+    whereConditions.push('m.is_favorite = 1');
+  } else if (favoriteParam === 'false' || favoriteParam === '0' || favoriteParam === 'not-favorite') {
+    whereConditions.push('(m.is_favorite = 0 OR m.is_favorite IS NULL)');
+  }
+  if (forwardParam === 'true' || forwardParam === '1' || forwardParam === 'has-forward') {
+    whereConditions.push("(m.forward_to IS NOT NULL AND m.forward_to != '')");
+  } else if (forwardParam === 'false' || forwardParam === '0' || forwardParam === 'no-forward') {
+    whereConditions.push("(m.forward_to IS NULL OR m.forward_to = '')");
+  }
+  if (tagParam && tagParam.trim()) {
+    whereConditions.push("(',' || COALESCE(m.tags, '') || ',') LIKE ?");
+    bindParams.push(`%,${tagParam.trim()},%`);
+  }
+  if (purposeParam && purposeParam.trim()) {
+    whereConditions.push('COALESCE(m.purpose, \'\') LIKE ?');
+    bindParams.push(`%${purposeParam.trim()}%`);
+  }
+  if (expiredParam === 'true' || expiredParam === '1') {
+    whereConditions.push("m.expires_at IS NOT NULL AND datetime(m.expires_at) <= datetime('now')");
+  } else if (expiredParam === 'false' || expiredParam === '0') {
+    whereConditions.push("(m.expires_at IS NULL OR datetime(m.expires_at) > datetime('now'))");
+  }
+}
+
+export async function cleanupExpiredMailboxes(db, r2 = null, limit = 500) {
+  const { results: expired } = await db.prepare(`
+    SELECT id, address FROM mailboxes
+    WHERE expires_at IS NOT NULL AND datetime(expires_at) <= datetime('now')
+    ORDER BY datetime(expires_at) ASC
+    LIMIT ?
+  `).bind(Math.max(1, Math.min(1000, Number(limit || 500)))).all();
+  const items = expired || [];
+  if (!items.length) {
+    return { success: true, deleted_mailboxes: 0, deleted_messages: 0, deleted_r2_objects: 0 };
+  }
+
+  const ids = items.map(row => Number(row.id)).filter(Boolean);
+  const placeholders = ids.map(() => '?').join(',');
+  const { results: objects } = await db.prepare(`
+    SELECT r2_object_key FROM messages
+    WHERE mailbox_id IN (${placeholders})
+      AND r2_object_key IS NOT NULL
+      AND r2_object_key != ''
+  `).bind(...ids).all();
+
+  const messageResult = await db.prepare(`DELETE FROM messages WHERE mailbox_id IN (${placeholders})`)
+    .bind(...ids).run();
+  const mailboxResult = await db.prepare(`DELETE FROM mailboxes WHERE id IN (${placeholders})`)
+    .bind(...ids).run();
+
+  let deletedR2Objects = 0;
+  if (r2 && objects?.length) {
+    for (const row of objects) {
+      try {
+        await r2.delete(row.r2_object_key);
+        deletedR2Objects++;
+      } catch (_) { }
+    }
+  }
+
+  return {
+    success: true,
+    deleted_mailboxes: mailboxResult?.meta?.changes || ids.length,
+    deleted_messages: messageResult?.meta?.changes || 0,
+    deleted_r2_objects: deletedR2Objects
+  };
+}
 
 /**
  * 处理邮箱管理相关 API
@@ -47,12 +212,31 @@ export async function handleMailboxesApi(request, db, mailDomains, url, path, op
     if (!isMock) {
       try {
         const payload = getJwtPayload(request, options);
+        const meta = buildMailboxMeta(Object.fromEntries(url.searchParams.entries()));
+        const responseExpires = meta.expires_at ? new Date(meta.expires_at).getTime() : Date.now() + 3600000;
         if (payload?.userId) {
           await assignMailboxToUser(db, { userId: payload.userId, address: email });
-          return Response.json({ email, expires: Date.now() + 3600000 });
+          const mailboxId = await getMailboxIdByAddress(db, email);
+          if (mailboxId) await updateMailboxMeta(db, mailboxId, meta);
+          await logAuditEvent(db, request, options, {
+            action: 'mailbox.generate',
+            targetType: 'mailbox',
+            targetId: mailboxId,
+            targetAddress: email,
+            metadata: { domain: chosenDomain }
+          });
+          return Response.json({ email, expires: responseExpires });
         }
-        await getOrCreateMailboxId(db, email);
-        return Response.json({ email, expires: Date.now() + 3600000 });
+        const mailboxId = await getOrCreateMailboxId(db, email);
+        await updateMailboxMeta(db, mailboxId, meta);
+        await logAuditEvent(db, request, options, {
+          action: 'mailbox.generate',
+          targetType: 'mailbox',
+          targetId: mailboxId,
+          targetAddress: email,
+          metadata: { domain: chosenDomain }
+        });
+        return Response.json({ email, expires: responseExpires });
       } catch (e) {
         return errorResponse(String(e?.message || '创建失败'), 400);
       }
@@ -89,12 +273,24 @@ export async function handleMailboxesApi(request, db, mailDomains, url, path, op
       try {
         const payload = getJwtPayload(request, options);
         const userId = payload?.userId;
+        const meta = buildMailboxMeta(body);
+        const responseExpires = meta.expires_at ? new Date(meta.expires_at).getTime() : Date.now() + 3600000;
+        let mailboxId = null;
         if (userId) {
           await assignMailboxToUser(db, { userId, address: email });
+          mailboxId = await getMailboxIdByAddress(db, email);
         } else {
-          await getOrCreateMailboxId(db, email);
+          mailboxId = await getOrCreateMailboxId(db, email);
         }
-        return Response.json({ email, expires: Date.now() + 3600000 });
+        if (mailboxId) await updateMailboxMeta(db, mailboxId, meta);
+        await logAuditEvent(db, request, options, {
+          action: 'mailbox.create',
+          targetType: 'mailbox',
+          targetId: mailboxId,
+          targetAddress: email,
+          metadata: { custom: true, domain: chosenDomain }
+        });
+        return Response.json({ email, expires: responseExpires });
       } catch (e) {
         return errorResponse(String(e?.message || '创建失败'), 400);
       }
@@ -112,37 +308,61 @@ export async function handleMailboxesApi(request, db, mailDomains, url, path, op
         address,
         is_favorite: false,
         forward_to: null,
-        can_login: false
+        can_login: false,
+        note: '',
+        tags: '',
+        purpose: '',
+        expires_at: null,
+        is_expired: false
       });
     }
     
     try {
       const { results } = await db.prepare(
-        'SELECT id, address, is_favorite, forward_to, can_login FROM mailboxes WHERE address = ? LIMIT 1'
+        'SELECT id, address, is_favorite, forward_to, can_login, note, tags, purpose, expires_at FROM mailboxes WHERE address = ? LIMIT 1'
       ).bind(address.toLowerCase()).all();
       
       if (!results || results.length === 0) {
-        return Response.json({
-          id: null,
-          address,
-          is_favorite: false,
-          forward_to: null,
-          can_login: false
-        });
+        return Response.json(mailboxInfoResponse(null, address));
       }
       
       const row = results[0];
       const access = await getMailboxAccess(db, request, options, { mailboxId: row.id });
       if (!access.allowed) return errorResponse('Forbidden', 403);
-      return Response.json({
-        id: row.id,
-        address: row.address,
-        is_favorite: !!row.is_favorite,
-        forward_to: row.forward_to || null,
-        can_login: !!row.can_login
-      });
+      return Response.json(mailboxInfoResponse(row, address));
     } catch (e) {
       return errorResponse('查询失败', 500);
+    }
+  }
+
+  // 更新邮箱备注、标签、用途和过期时间
+  if (path === '/api/mailbox/info' && request.method === 'PATCH') {
+    if (isMock) return errorResponse('演示模式不可修改', 403);
+    try {
+      const body = await request.json();
+      const address = String(body.address || '').trim().toLowerCase();
+      const mailboxId = Number(body.mailbox_id || body.mailboxId || 0);
+      if (!address && !mailboxId) return errorResponse('缺少邮箱标识', 400);
+
+      const access = await getMailboxAccess(db, request, options, { mailboxId: mailboxId || null, address });
+      if (!access.exists) return errorResponse('Not Found', 404);
+      if (!access.allowed) return errorResponse('Forbidden', 403);
+
+      const meta = buildMailboxMeta(body);
+      await updateMailboxMeta(db, access.mailbox.id, meta);
+      const row = await db.prepare(
+        'SELECT id, address, is_favorite, forward_to, can_login, note, tags, purpose, expires_at FROM mailboxes WHERE id = ? LIMIT 1'
+      ).bind(access.mailbox.id).first();
+      await logAuditEvent(db, request, options, {
+        action: 'mailbox.metadata.update',
+        targetType: 'mailbox',
+        targetId: access.mailbox.id,
+        targetAddress: row?.address || address,
+        metadata: meta
+      });
+      return Response.json(mailboxInfoResponse(row, address));
+    } catch (e) {
+      return errorResponse('更新邮箱信息失败', 500);
     }
   }
 
@@ -220,7 +440,8 @@ export async function handleMailboxesApi(request, db, mailDomains, url, path, op
           SELECT id, address, created_at, 0 AS is_pinned,
                  CASE WHEN (password_hash IS NULL OR password_hash = '') THEN 1 ELSE 0 END AS password_is_default,
                  COALESCE(can_login, 0) AS can_login,
-                 forward_to, COALESCE(is_favorite, 0) AS is_favorite
+                 forward_to, COALESCE(is_favorite, 0) AS is_favorite,
+                 note, tags, purpose, expires_at
           FROM mailboxes
           WHERE address = ?
           LIMIT 1
@@ -277,43 +498,7 @@ export async function handleMailboxesApi(request, db, mailDomains, url, path, op
         bindParams.push(uid);
       }
       
-      const searchParam = url.searchParams.get('q');
-      const domainParam = url.searchParams.get('domain');
-      const loginParam = url.searchParams.get('login');
-      const favoriteParam = url.searchParams.get('favorite');
-      const forwardParam = url.searchParams.get('forward');
-      
-      // 搜索过滤（模糊匹配邮箱地址）
-      if (searchParam && searchParam.trim()) {
-        whereConditions.push('m.address LIKE ?');
-        bindParams.push(`%${searchParam.trim().toLowerCase()}%`);
-      }
-      
-      if (domainParam) {
-        whereConditions.push('m.domain = ?');
-        bindParams.push(domainParam);
-      }
-      
-      // 登录权限筛选（支持 true/1/allowed 和 false/0/denied）
-      if (loginParam === 'true' || loginParam === '1' || loginParam === 'allowed') {
-        whereConditions.push('m.can_login = 1');
-      } else if (loginParam === 'false' || loginParam === '0' || loginParam === 'denied') {
-        whereConditions.push('(m.can_login = 0 OR m.can_login IS NULL)');
-      }
-      
-      // 收藏筛选（支持 true/1/favorite 和 false/0/not-favorite）
-      if (favoriteParam === 'true' || favoriteParam === '1' || favoriteParam === 'favorite') {
-        whereConditions.push('m.is_favorite = 1');
-      } else if (favoriteParam === 'false' || favoriteParam === '0' || favoriteParam === 'not-favorite') {
-        whereConditions.push('(m.is_favorite = 0 OR m.is_favorite IS NULL)');
-      }
-      
-      // 转发筛选（支持 true/1/has-forward 和 false/0/no-forward）
-      if (forwardParam === 'true' || forwardParam === '1' || forwardParam === 'has-forward') {
-        whereConditions.push("(m.forward_to IS NOT NULL AND m.forward_to != '')");
-      } else if (forwardParam === 'false' || forwardParam === '0' || forwardParam === 'no-forward') {
-        whereConditions.push("(m.forward_to IS NULL OR m.forward_to = '')");
-      }
+      addMailboxListFilters(url, whereConditions, bindParams);
       
       const whereClause = whereConditions.length > 0 ? 'WHERE ' + whereConditions.join(' AND ') : '';
       bindParams.push(limit, offset);
@@ -341,7 +526,8 @@ export async function handleMailboxesApi(request, db, mailDomains, url, path, op
           SELECT m.id, m.address, m.created_at, COALESCE(um.is_pinned, 0) AS is_pinned,
                  CASE WHEN (m.password_hash IS NULL OR m.password_hash = '') THEN 1 ELSE 0 END AS password_is_default,
                  COALESCE(m.can_login, 0) AS can_login,
-                 m.forward_to, COALESCE(m.is_favorite, 0) AS is_favorite
+                 m.forward_to, COALESCE(m.is_favorite, 0) AS is_favorite,
+                 m.note, m.tags, m.purpose, m.expires_at
           FROM mailboxes m
           LEFT JOIN user_mailboxes um ON m.id = um.mailbox_id AND um.user_id = ?
           ${whereClause}
@@ -363,7 +549,8 @@ export async function handleMailboxesApi(request, db, mailDomains, url, path, op
           SELECT m.id, m.address, m.created_at, 0 AS is_pinned,
                  CASE WHEN (m.password_hash IS NULL OR m.password_hash = '') THEN 1 ELSE 0 END AS password_is_default,
                  COALESCE(m.can_login, 0) AS can_login,
-                 m.forward_to, COALESCE(m.is_favorite, 0) AS is_favorite
+                 m.forward_to, COALESCE(m.is_favorite, 0) AS is_favorite,
+                 m.note, m.tags, m.purpose, m.expires_at
           FROM mailboxes m
           ${whereClause}
           ORDER BY m.created_at DESC
@@ -385,7 +572,8 @@ export async function handleMailboxesApi(request, db, mailDomains, url, path, op
           SELECT m.id, m.address, m.created_at, um.is_pinned,
                  CASE WHEN (m.password_hash IS NULL OR m.password_hash = '') THEN 1 ELSE 0 END AS password_is_default,
                  COALESCE(m.can_login, 0) AS can_login,
-                 m.forward_to, COALESCE(m.is_favorite, 0) AS is_favorite
+                 m.forward_to, COALESCE(m.is_favorite, 0) AS is_favorite,
+                 m.note, m.tags, m.purpose, m.expires_at
           FROM user_mailboxes um
           JOIN mailboxes m ON m.id = um.mailbox_id
           ${whereClause}
@@ -396,6 +584,80 @@ export async function handleMailboxesApi(request, db, mailDomains, url, path, op
       }
     } catch (_) {
       return Response.json({ list: [], total: 0 });
+    }
+  }
+
+  // 管理员健康检查：帮助自建站快速确认关键绑定和近期数据状态
+  if (path === '/api/system/health' && request.method === 'GET') {
+    if (isMock) return Response.json({ mock: true, ok: true });
+    if (!isStrictAdmin(request, options)) return errorResponse('Forbidden', 403);
+    try {
+      const count = async (sql) => (await db.prepare(sql).first())?.total || 0;
+      const domains = Array.isArray(mailDomains) ? mailDomains : [(mailDomains || 'temp.example.com')];
+      const latestMessage = await db.prepare('SELECT received_at FROM messages ORDER BY received_at DESC LIMIT 1').first();
+      const latestSent = await db.prepare('SELECT created_at, status FROM sent_emails ORDER BY created_at DESC LIMIT 1').first();
+      return Response.json({
+        ok: true,
+        checked_at: new Date().toISOString(),
+        db_bound: !!db,
+        r2_bound: !!options.r2,
+        resend_configured: !!options.resendApiKey,
+        domains,
+        counts: {
+          users: await count('SELECT COUNT(*) AS total FROM users'),
+          mailboxes: await count('SELECT COUNT(*) AS total FROM mailboxes'),
+          messages: await count('SELECT COUNT(*) AS total FROM messages'),
+          sent_emails: await count('SELECT COUNT(*) AS total FROM sent_emails'),
+          expired_mailboxes: await count("SELECT COUNT(*) AS total FROM mailboxes WHERE expires_at IS NOT NULL AND datetime(expires_at) <= datetime('now')")
+        },
+        latest_message_at: latestMessage?.received_at || null,
+        latest_sent_status: latestSent || null
+      });
+    } catch (e) {
+      return errorResponse('健康检查失败', 500);
+    }
+  }
+
+  // 管理员查看审计日志
+  if (path === '/api/audit/logs' && request.method === 'GET') {
+    if (isMock) return Response.json({ list: [], total: 0 });
+    if (!isStrictAdmin(request, options)) return errorResponse('Forbidden', 403);
+    try {
+      const limit = Math.max(1, Math.min(200, Number(url.searchParams.get('limit') || 50)));
+      const offset = Math.max(0, Number(url.searchParams.get('offset') || 0));
+      const action = String(url.searchParams.get('action') || '').trim();
+      const where = action ? 'WHERE action = ?' : '';
+      const binds = action ? [action] : [];
+      const totalRow = await db.prepare(`SELECT COUNT(*) AS total FROM audit_logs ${where}`)
+        .bind(...binds).first();
+      const { results } = await db.prepare(`
+        SELECT id, actor_role, actor_user_id, actor_username, action,
+               target_type, target_id, target_address, metadata, ip, created_at
+        FROM audit_logs
+        ${where}
+        ORDER BY datetime(created_at) DESC, id DESC
+        LIMIT ? OFFSET ?
+      `).bind(...binds, limit, offset).all();
+      return Response.json({ list: results || [], total: totalRow?.total || 0 });
+    } catch (e) {
+      return Response.json({ list: [], total: 0 });
+    }
+  }
+
+  // 管理员清理已过期邮箱及其邮件
+  if (path === '/api/maintenance/cleanup' && request.method === 'POST') {
+    if (isMock) return errorResponse('演示模式不可清理', 403);
+    if (!isStrictAdmin(request, options)) return errorResponse('Forbidden', 403);
+    try {
+      const result = await cleanupExpiredMailboxes(db, options.r2, Number(url.searchParams.get('limit') || 500));
+      await logAuditEvent(db, request, options, {
+        action: 'maintenance.cleanup_expired_mailboxes',
+        targetType: 'mailbox',
+        metadata: result
+      });
+      return Response.json(result);
+    } catch (e) {
+      return errorResponse('清理失败', 500);
     }
   }
 
@@ -429,6 +691,12 @@ export async function handleMailboxesApi(request, db, mailDomains, url, path, op
         if (!access.allowed) return errorResponse('Forbidden', 403);
       }
       const result = await toggleMailboxPin(db, address, uid);
+      await logAuditEvent(db, request, options, {
+        action: 'mailbox.pin.toggle',
+        targetType: 'mailbox',
+        targetAddress: address,
+        metadata: result
+      });
       return Response.json({ success: true, ...result });
     } catch (e) {
       return errorResponse('操作失败: ' + e.message, 500);

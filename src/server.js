@@ -9,6 +9,8 @@ import authRoutes from './routes/auth.js';
 import apiRoutes from './routes/api.js';
 import staticRoutes from './routes/static.js';
 import { handleEmailEvent } from './email/handler.js';
+import { getInitializedDatabase } from './db/index.js';
+import { cleanupExpiredMailboxes } from './api/mailboxes.js';
 
 const app = new Hono();
 
@@ -29,5 +31,15 @@ export default {
   fetch: app.fetch,
   async email(message, env, ctx) {
     return handleEmailEvent(message, env, ctx);
+  },
+  async scheduled(_event, env, ctx) {
+    ctx.waitUntil((async () => {
+      try {
+        const db = await getInitializedDatabase(env);
+        await cleanupExpiredMailboxes(db, env.MAIL_EML, 500);
+      } catch (error) {
+        console.error('自动清理过期邮箱失败:', error);
+      }
+    })());
   }
 };

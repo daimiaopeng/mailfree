@@ -173,7 +173,8 @@ export async function assignMailboxToUser(db, { userId = null, username = null, 
 export async function getUserMailboxes(db, userId, limit = 100) {
   const sql = `
     SELECT m.address, m.created_at, um.is_pinned,
-           COALESCE(m.can_login, 0) AS can_login
+           COALESCE(m.can_login, 0) AS can_login,
+           m.note, m.tags, m.purpose, m.expires_at
     FROM user_mailboxes um
     JOIN mailboxes m ON m.id = um.mailbox_id
     WHERE um.user_id = ?

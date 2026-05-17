@@ -49,7 +49,12 @@ jobs:
           python-version: "3.12"
 
       - name: Check test script syntax
-        run: python -m py_compile security/freemail_api_tests.py
+        run: |
+          python -m py_compile security/freemail_api_tests.py
+          python -m py_compile security/freemail_upgrade_smoke.py
+
+      - name: Run upgrade smoke tests
+        run: python security/freemail_upgrade_smoke.py
 
       - name: Run API integration tests
         run: |

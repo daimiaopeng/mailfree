@@ -108,3 +108,6 @@ wrangler-github.toml
 wrangler-dev.toml
 findings.md
 progress.md
+security/freemail-vuln-report.json
+security/ISSUE_ZH.md
+/.vs
