@@ -806,6 +806,10 @@ curl "https://your.domain/api/session?admin_token=<JWT_TOKEN>"
 ### GET /api/system/health
 严格管理员健康检查，返回 D1/R2/Resend 配置状态、域名列表、用户/邮箱/邮件/发件统计和过期邮箱数量。
 
+### GET /api/admin/analytics
+严格管理员数据分析接口，支持 `range=7d|30d|90d`，默认 `30d`。
+返回总览指标、按天趋势、发信状态分布、邮箱域名分布和用户邮箱数量 Top 列表。
+
 ### GET /api/audit/logs
 严格管理员审计日志查询，支持 `limit`、`offset`、`action`。
 

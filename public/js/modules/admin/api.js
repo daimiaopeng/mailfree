@@ -92,6 +92,28 @@ export async function getUserMailboxes(userId, params = {}) {
 }
 
 /**
+ * 获取系统健康状态
+ * @returns {Promise<object>}
+ */
+export async function getSystemHealth() {
+  const r = await api('/api/system/health');
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+/**
+ * 获取管理员数据分析
+ * @param {string} range - 7d / 30d / 90d
+ * @returns {Promise<object>}
+ */
+export async function getAnalytics(range = '30d') {
+  const query = new URLSearchParams({ range });
+  const r = await api(`/api/admin/analytics?${query.toString()}`);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+/**
  * 分配邮箱给用户
  * @param {string} username - 用户名
  * @param {string} address - 邮箱地址
@@ -126,6 +148,8 @@ export default {
   updateUser,
   deleteUser,
   getUserMailboxes,
+  getSystemHealth,
+  getAnalytics,
   assignMailbox,
   unassignMailbox
 };

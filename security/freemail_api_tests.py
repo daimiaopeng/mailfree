@@ -591,6 +591,7 @@ def test_admin(cases: list[CaseResult], args: argparse.Namespace, generated_mail
         for method, path, name in [
             ("GET", "/api/users", "管理员用户列表"),
             ("GET", "/api/system/health", "管理员健康检查"),
+            ("GET", "/api/admin/analytics", "管理员数据分析"),
             ("GET", "/api/audit/logs", "管理员审计日志"),
             ("POST", "/api/users", "管理员创建用户"),
             ("PATCH", "/api/users/:id", "管理员更新用户"),
@@ -619,6 +620,8 @@ def test_admin(cases: list[CaseResult], args: argparse.Namespace, generated_mail
     expect_status(cases, client, "管理员邮箱列表", "GET", "/api/mailboxes", {200}, params={"limit": 20, "offset": 0})
     health = expect_status(cases, client, "管理员健康检查", "GET", "/api/system/health", {200, 404}, warn_only=True)
     warn_when_missing_new_endpoint(cases, health)
+    analytics = expect_status(cases, client, "管理员数据分析", "GET", "/api/admin/analytics", {200, 404}, params={"range": "30d"}, warn_only=True)
+    warn_when_missing_new_endpoint(cases, analytics)
     audit = expect_status(cases, client, "管理员审计日志", "GET", "/api/audit/logs", {200, 404}, params={"limit": 10, "offset": 0}, warn_only=True)
     warn_when_missing_new_endpoint(cases, audit)
 

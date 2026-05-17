@@ -180,6 +180,136 @@ export async function cleanupExpiredMailboxes(db, r2 = null, limit = 500) {
   };
 }
 
+function normalizeAnalyticsRange(value) {
+  const allowed = new Set(['7d', '30d', '90d']);
+  const range = String(value || '30d').toLowerCase();
+  return allowed.has(range) ? range : '30d';
+}
+
+function buildAnalyticsDays(range) {
+  const count = Number(range.replace('d', ''));
+  const days = [];
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  for (let i = count - 1; i >= 0; i--) {
+    const date = new Date(today);
+    date.setUTCDate(today.getUTCDate() - i);
+    days.push(date.toISOString().slice(0, 10));
+  }
+  return days;
+}
+
+function mapDailyRows(rows = []) {
+  const map = new Map();
+  for (const row of rows || []) {
+    if (row?.day) map.set(String(row.day), Number(row.total || 0));
+  }
+  return map;
+}
+
+async function queryDailyCount(db, table, column, days) {
+  const start = `${days[0]} 00:00:00`;
+  const { results } = await db.prepare(`
+    SELECT date(${column}) AS day, COUNT(*) AS total
+    FROM ${table}
+    WHERE datetime(${column}) >= datetime(?)
+    GROUP BY date(${column})
+    ORDER BY day ASC
+  `).bind(start).all();
+  return mapDailyRows(results);
+}
+
+async function buildAdminAnalytics(db, range) {
+  const days = buildAnalyticsDays(range);
+  const count = async (sql) => (await db.prepare(sql).first())?.total || 0;
+  const [usersByDay, mailboxesByDay, messagesByDay, sentByDay] = await Promise.all([
+    queryDailyCount(db, 'users', 'created_at', days),
+    queryDailyCount(db, 'mailboxes', 'created_at', days),
+    queryDailyCount(db, 'messages', 'received_at', days),
+    queryDailyCount(db, 'sent_emails', 'created_at', days)
+  ]);
+
+  const trend = days.map(day => ({
+    date: day,
+    users: usersByDay.get(day) || 0,
+    mailboxes: mailboxesByDay.get(day) || 0,
+    messages: messagesByDay.get(day) || 0,
+    sent_emails: sentByDay.get(day) || 0
+  }));
+
+  const { results: sentStatus } = await db.prepare(`
+    SELECT COALESCE(NULLIF(status, ''), 'unknown') AS status, COUNT(*) AS total
+    FROM sent_emails
+    GROUP BY COALESCE(NULLIF(status, ''), 'unknown')
+    ORDER BY total DESC
+  `).all();
+  const { results: domainDistribution } = await db.prepare(`
+    SELECT COALESCE(NULLIF(domain, ''), 'unknown') AS domain, COUNT(*) AS total
+    FROM mailboxes
+    GROUP BY COALESCE(NULLIF(domain, ''), 'unknown')
+    ORDER BY total DESC
+    LIMIT 12
+  `).all();
+  const { results: topUsers } = await db.prepare(`
+    SELECT u.id, u.username, COUNT(um.mailbox_id) AS mailbox_count
+    FROM users u
+    LEFT JOIN user_mailboxes um ON um.user_id = u.id
+    GROUP BY u.id, u.username
+    ORDER BY mailbox_count DESC, u.id ASC
+    LIMIT 10
+  `).all();
+
+  return {
+    ok: true,
+    range,
+    generated_at: new Date().toISOString(),
+    totals: {
+      users: await count('SELECT COUNT(*) AS total FROM users'),
+      mailboxes: await count('SELECT COUNT(*) AS total FROM mailboxes'),
+      messages: await count('SELECT COUNT(*) AS total FROM messages'),
+      sent_emails: await count('SELECT COUNT(*) AS total FROM sent_emails'),
+      expired_mailboxes: await count("SELECT COUNT(*) AS total FROM mailboxes WHERE expires_at IS NOT NULL AND datetime(expires_at) <= datetime('now')")
+    },
+    trend,
+    sent_status: (sentStatus || []).map(row => ({ status: row.status, total: Number(row.total || 0) })),
+    domain_distribution: (domainDistribution || []).map(row => ({ domain: row.domain, total: Number(row.total || 0) })),
+    top_users: (topUsers || []).map(row => ({ id: row.id, username: row.username, mailbox_count: Number(row.mailbox_count || 0) }))
+  };
+}
+
+function buildMockAnalytics(range) {
+  const days = buildAnalyticsDays(range);
+  const trend = days.map((day, index) => ({
+    date: day,
+    users: index % 5 === 0 ? 1 : 0,
+    mailboxes: 2 + (index % 4),
+    messages: 8 + ((index * 7) % 18),
+    sent_emails: 1 + (index % 6)
+  }));
+  return {
+    ok: true,
+    mock: true,
+    range,
+    generated_at: new Date().toISOString(),
+    totals: { users: 8, mailboxes: 24, messages: 168, sent_emails: 36, expired_mailboxes: 3 },
+    trend,
+    sent_status: [
+      { status: 'delivered', total: 24 },
+      { status: 'queued', total: 8 },
+      { status: 'failed', total: 4 }
+    ],
+    domain_distribution: [
+      { domain: 'example.com', total: 18 },
+      { domain: 'demo.test', total: 6 }
+    ],
+    top_users: [
+      { id: 1, username: 'guest', mailbox_count: 8 },
+      { id: 2, username: 'operator', mailbox_count: 5 },
+      { id: 3, username: 'tester', mailbox_count: 3 }
+    ]
+  };
+}
+
 /**
  * 处理邮箱管理相关 API
  * @param {Request} request - HTTP 请求
@@ -615,6 +745,18 @@ export async function handleMailboxesApi(request, db, mailDomains, url, path, op
       });
     } catch (e) {
       return errorResponse('健康检查失败', 500);
+    }
+  }
+
+  // 管理员数据分析：运营趋势和分布图表的数据源
+  if (path === '/api/admin/analytics' && request.method === 'GET') {
+    const range = normalizeAnalyticsRange(url.searchParams.get('range'));
+    if (isMock) return Response.json(buildMockAnalytics(range));
+    if (!isStrictAdmin(request, options)) return errorResponse('Forbidden', 403);
+    try {
+      return Response.json(await buildAdminAnalytics(db, range));
+    } catch (e) {
+      return errorResponse('数据分析失败', 500);
     }
   }
 

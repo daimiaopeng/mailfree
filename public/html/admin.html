@@ -141,6 +141,32 @@
         </div>
       </div>
 
+      <!-- 系统健康状态栏 -->
+      <div class="health-strip" id="health-strip">
+        <div class="health-strip-main">
+          <div class="health-title">
+            <span class="health-title-dot"></span>
+            <span>系统健康</span>
+          </div>
+          <div class="health-items">
+            <span class="health-pill status-unknown" id="health-d1">D1 检查中</span>
+            <span class="health-pill status-unknown" id="health-r2">R2 检查中</span>
+            <span class="health-pill status-unknown" id="health-resend">Resend 检查中</span>
+            <span class="health-pill status-unknown" id="health-routing">Email Routing 检查中</span>
+            <span class="health-pill status-muted" id="health-latest">最近收信 --</span>
+          </div>
+        </div>
+        <div class="health-actions">
+          <span class="health-time" id="health-checked-at">未检查</span>
+          <button id="health-refresh" class="btn btn-secondary btn-sm" type="button">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <use href="/icons/sprites.svg#icon-refresh"/>
+            </svg>
+            <span>刷新</span>
+          </button>
+        </div>
+      </div>
+
       <!-- 主内容区域 -->
       <div class="admin-main">
         <div class="admin-left">
@@ -157,6 +183,20 @@
               </h2>
             </div>
             <div class="action-buttons">
+              <button id="nav-users" class="action-btn action-btn-primary admin-nav-btn active" aria-label="用户管理">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <use href="/icons/sprites.svg#icon-users"/>
+                </svg>
+                <span>用户管理</span>
+              </button>
+              <button id="nav-analytics" class="action-btn action-btn-outline admin-nav-btn" aria-label="数据分析">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                </svg>
+                <span>数据分析</span>
+              </button>
+            </div>
+            <div class="action-buttons admin-action-buttons">
               <button id="u-open" class="action-btn action-btn-primary" aria-label="创建新用户">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <use href="/icons/sprites.svg#icon-plus"/>
@@ -276,6 +316,65 @@
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 数据分析面板 -->
+      <div class="analytics-panel" id="analytics-panel" style="display:none">
+        <div class="analytics-header card">
+          <div>
+            <p class="analytics-kicker">Analytics</p>
+            <h2>数据分析</h2>
+          </div>
+          <div class="range-switch" id="analytics-range">
+            <button class="range-btn" data-range="7d">7 天</button>
+            <button class="range-btn active" data-range="30d">30 天</button>
+            <button class="range-btn" data-range="90d">90 天</button>
+          </div>
+        </div>
+        <div id="analytics-loading" class="loading-indicator" style="display:none">
+          <div class="spinner"></div>
+          <span>正在生成图表…</span>
+        </div>
+        <div class="analytics-metrics">
+          <div class="analytics-metric"><span id="metric-users">0</span><small>用户</small></div>
+          <div class="analytics-metric"><span id="metric-mailboxes">0</span><small>邮箱</small></div>
+          <div class="analytics-metric"><span id="metric-messages">0</span><small>收信</small></div>
+          <div class="analytics-metric"><span id="metric-sent">0</span><small>发信</small></div>
+          <div class="analytics-metric warning"><span id="metric-expired">0</span><small>过期邮箱</small></div>
+        </div>
+        <div class="analytics-grid">
+          <div class="card chart-card chart-wide">
+            <div class="chart-head">
+              <h3>收信 / 发信趋势</h3>
+              <span id="chart-trend-summary" class="chart-subtitle"></span>
+            </div>
+            <div id="chart-trend" class="chart-canvas"></div>
+          </div>
+          <div class="card chart-card">
+            <div class="chart-head">
+              <h3>新增用户 / 邮箱</h3>
+            </div>
+            <div id="chart-growth" class="chart-canvas"></div>
+          </div>
+          <div class="card chart-card">
+            <div class="chart-head">
+              <h3>发信状态</h3>
+            </div>
+            <div id="chart-sent-status" class="chart-canvas"></div>
+          </div>
+          <div class="card chart-card">
+            <div class="chart-head">
+              <h3>邮箱域名分布</h3>
+            </div>
+            <div id="chart-domains" class="bar-list"></div>
+          </div>
+          <div class="card chart-card">
+            <div class="chart-head">
+              <h3>用户邮箱 Top</h3>
+            </div>
+            <div id="chart-top-users" class="bar-list"></div>
           </div>
         </div>
       </div>
@@ -626,5 +725,4 @@
     </script>
   </body>
   </html>
-
 

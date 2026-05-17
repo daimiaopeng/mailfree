@@ -3,7 +3,7 @@
  * @module admin
  */
 
-import { api, getUsers, createUser, updateUser, deleteUser, getUserMailboxes, assignMailbox, unassignMailbox } from './modules/admin/api.js';
+import { api, getUsers, createUser, updateUser, deleteUser, getUserMailboxes, getSystemHealth, getAnalytics, assignMailbox, unassignMailbox } from './modules/admin/api.js';
 import { formatTime, renderUserRow, renderUserList, generateSkeletonRows, renderPagination } from './modules/admin/user-list.js';
 import { fillEditForm, collectEditFormData, validateEditForm, resetEditState } from './modules/admin/user-edit.js';
 
@@ -14,6 +14,8 @@ const showToast = window.showToast || ((msg, type) => console.log(`[${type}] ${m
 let currentPage = 1, pageSize = 20, totalUsers = 0;
 let currentViewingUser = null;
 let mailboxPage = 1, mailboxPageSize = 20, totalMailboxes = 0;
+let analyticsRange = '30d';
+let analyticsLoaded = false;
 
 // DOM 元素
 const els = {
@@ -29,6 +31,30 @@ const els = {
   paginationText: document.getElementById('pagination-text'),
   prevPage: document.getElementById('prev-page'),
   nextPage: document.getElementById('next-page'),
+  adminMain: document.querySelector('.admin-main'),
+  analyticsPanel: document.getElementById('analytics-panel'),
+  navUsers: document.getElementById('nav-users'),
+  navAnalytics: document.getElementById('nav-analytics'),
+  healthD1: document.getElementById('health-d1'),
+  healthR2: document.getElementById('health-r2'),
+  healthResend: document.getElementById('health-resend'),
+  healthRouting: document.getElementById('health-routing'),
+  healthLatest: document.getElementById('health-latest'),
+  healthCheckedAt: document.getElementById('health-checked-at'),
+  healthRefresh: document.getElementById('health-refresh'),
+  analyticsLoading: document.getElementById('analytics-loading'),
+  analyticsRange: document.getElementById('analytics-range'),
+  metricUsers: document.getElementById('metric-users'),
+  metricMailboxes: document.getElementById('metric-mailboxes'),
+  metricMessages: document.getElementById('metric-messages'),
+  metricSent: document.getElementById('metric-sent'),
+  metricExpired: document.getElementById('metric-expired'),
+  chartTrend: document.getElementById('chart-trend'),
+  chartTrendSummary: document.getElementById('chart-trend-summary'),
+  chartGrowth: document.getElementById('chart-growth'),
+  chartSentStatus: document.getElementById('chart-sent-status'),
+  chartDomains: document.getElementById('chart-domains'),
+  chartTopUsers: document.getElementById('chart-top-users'),
   
   uOpen: document.getElementById('u-open'),
   uModal: document.getElementById('u-modal'),
@@ -159,6 +185,216 @@ function updateStats(users) {
   if (statAdmin) statAdmin.textContent = adminCount;
   if (statMailbox) statMailbox.textContent = mailboxCount;
   if (statActive) statActive.textContent = activeUsers;
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[ch]));
+}
+
+function compactNumber(value) {
+  const n = Number(value || 0);
+  if (n >= 10000) return `${(n / 10000).toFixed(1)}万`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+  return String(n);
+}
+
+function setHealthPill(el, label, state = 'unknown') {
+  if (!el) return;
+  el.className = `health-pill status-${state}`;
+  el.textContent = label;
+}
+
+function deriveRoutingState(health) {
+  const domains = Array.isArray(health?.domains) ? health.domains.filter(Boolean) : [];
+  if (!domains.length) return { label: 'Email Routing 未配置域名', state: 'danger' };
+  if (health?.latest_message_at) return { label: 'Email Routing 收信正常', state: 'ok' };
+  return { label: 'Email Routing 待验证', state: 'warn' };
+}
+
+async function loadSystemHealth() {
+  setHealthPill(els.healthD1, 'D1 检查中', 'unknown');
+  setHealthPill(els.healthR2, 'R2 检查中', 'unknown');
+  setHealthPill(els.healthResend, 'Resend 检查中', 'unknown');
+  setHealthPill(els.healthRouting, 'Email Routing 检查中', 'unknown');
+  if (els.healthRefresh) els.healthRefresh.disabled = true;
+  try {
+    const health = await getSystemHealth();
+    setHealthPill(els.healthD1, health.db_bound ? 'D1 正常' : 'D1 异常', health.db_bound ? 'ok' : 'danger');
+    setHealthPill(els.healthR2, health.r2_bound ? 'R2 已绑定' : 'R2 未绑定', health.r2_bound ? 'ok' : 'warn');
+    setHealthPill(els.healthResend, health.resend_configured ? 'Resend 已配置' : 'Resend 未配置', health.resend_configured ? 'ok' : 'warn');
+    const routing = deriveRoutingState(health);
+    setHealthPill(els.healthRouting, routing.label, routing.state);
+    setHealthPill(els.healthLatest, health.latest_message_at ? `最近收信 ${formatTime(health.latest_message_at)}` : '最近收信 --', 'muted');
+    if (els.healthCheckedAt) els.healthCheckedAt.textContent = health.checked_at ? `检查 ${formatTime(health.checked_at)}` : '刚刚检查';
+  } catch (e) {
+    setHealthPill(els.healthD1, '健康检查不可用', 'danger');
+    setHealthPill(els.healthR2, 'R2 未知', 'unknown');
+    setHealthPill(els.healthResend, 'Resend 未知', 'unknown');
+    setHealthPill(els.healthRouting, 'Email Routing 未知', 'unknown');
+    setHealthPill(els.healthLatest, '最近收信 --', 'muted');
+    if (els.healthCheckedAt) els.healthCheckedAt.textContent = '检查失败';
+  } finally {
+    if (els.healthRefresh) els.healthRefresh.disabled = false;
+  }
+}
+
+function setAdminView(view) {
+  const isAnalytics = view === 'analytics';
+  if (els.adminMain) els.adminMain.style.display = isAnalytics ? 'none' : 'grid';
+  if (els.analyticsPanel) els.analyticsPanel.style.display = isAnalytics ? 'flex' : 'none';
+  els.navUsers?.classList.toggle('active', !isAnalytics);
+  els.navUsers?.classList.toggle('action-btn-primary', !isAnalytics);
+  els.navUsers?.classList.toggle('action-btn-outline', isAnalytics);
+  els.navAnalytics?.classList.toggle('active', isAnalytics);
+  els.navAnalytics?.classList.toggle('action-btn-primary', isAnalytics);
+  els.navAnalytics?.classList.toggle('action-btn-outline', !isAnalytics);
+  if (isAnalytics && !analyticsLoaded) loadAnalytics();
+}
+
+function buildSeriesPath(values, width, height, padding) {
+  const max = Math.max(1, ...values);
+  const innerW = width - padding * 2;
+  const innerH = height - padding * 2;
+  return values.map((value, index) => {
+    const x = padding + (values.length === 1 ? innerW / 2 : (innerW * index) / (values.length - 1));
+    const y = padding + innerH - (value / max) * innerH;
+    return `${index === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+}
+
+function renderTrendChart(data) {
+  if (!els.chartTrend) return;
+  const rows = data.trend || [];
+  if (!rows.length) {
+    els.chartTrend.innerHTML = '<div class="empty-chart">暂无趋势数据</div>';
+    return;
+  }
+  const width = 720, height = 240, padding = 28;
+  const messages = rows.map(row => Number(row.messages || 0));
+  const sent = rows.map(row => Number(row.sent_emails || 0));
+  const msgPath = buildSeriesPath(messages, width, height, padding);
+  const sentPath = buildSeriesPath(sent, width, height, padding);
+  const totalMessages = messages.reduce((sum, n) => sum + n, 0);
+  const totalSent = sent.reduce((sum, n) => sum + n, 0);
+  if (els.chartTrendSummary) els.chartTrendSummary.textContent = `收信 ${totalMessages} / 发信 ${totalSent}`;
+  els.chartTrend.innerHTML = `
+    <svg viewBox="0 0 ${width} ${height}" class="line-chart" role="img" aria-label="收信和发信趋势">
+      <path class="grid-line" d="M${padding},${height - padding} H${width - padding}" />
+      <path class="grid-line" d="M${padding},${padding} V${height - padding}" />
+      <path class="trend-area messages" d="${msgPath} L${width - padding},${height - padding} L${padding},${height - padding} Z" />
+      <path class="trend-line messages" d="${msgPath}" />
+      <path class="trend-line sent" d="${sentPath}" />
+    </svg>
+    <div class="chart-legend"><span class="legend-dot messages"></span>收信 <span class="legend-dot sent"></span>发信</div>
+  `;
+}
+
+function renderGrowthChart(data) {
+  if (!els.chartGrowth) return;
+  const rows = (data.trend || []).slice(-14);
+  if (!rows.length) {
+    els.chartGrowth.innerHTML = '<div class="empty-chart">暂无新增数据</div>';
+    return;
+  }
+  const max = Math.max(1, ...rows.map(row => Math.max(Number(row.users || 0), Number(row.mailboxes || 0))));
+  els.chartGrowth.innerHTML = `
+    <div class="bar-chart">
+      ${rows.map(row => {
+        const usersH = Math.max(4, (Number(row.users || 0) / max) * 100);
+        const mailboxesH = Math.max(4, (Number(row.mailboxes || 0) / max) * 100);
+        return `<div class="bar-day" title="${escapeHtml(row.date)}">
+          <span class="bar users" style="height:${usersH}%"></span>
+          <span class="bar mailboxes" style="height:${mailboxesH}%"></span>
+        </div>`;
+      }).join('')}
+    </div>
+    <div class="chart-legend"><span class="legend-dot users"></span>用户 <span class="legend-dot mailboxes"></span>邮箱</div>
+  `;
+}
+
+function renderDonutChart(data) {
+  if (!els.chartSentStatus) return;
+  const rows = data.sent_status || [];
+  const total = rows.reduce((sum, row) => sum + Number(row.total || 0), 0);
+  if (!total) {
+    els.chartSentStatus.innerHTML = '<div class="empty-chart">暂无发信记录</div>';
+    return;
+  }
+  const colors = ['#10b981', '#7c3aed', '#f59e0b', '#ef4444', '#64748b'];
+  let offset = 25;
+  const circles = rows.map((row, index) => {
+    const value = Number(row.total || 0);
+    const dash = (value / total) * 100;
+    const circle = `<circle r="36" cx="50" cy="50" pathLength="100" stroke="${colors[index % colors.length]}" stroke-dasharray="${dash} ${100 - dash}" stroke-dashoffset="${offset}" />`;
+    offset -= dash;
+    return circle;
+  }).join('');
+  els.chartSentStatus.innerHTML = `
+    <div class="donut-wrap">
+      <svg viewBox="0 0 100 100" class="donut-chart" role="img" aria-label="发信状态分布">
+        <circle r="36" cx="50" cy="50" class="donut-bg" />
+        ${circles}
+      </svg>
+      <div class="donut-center"><strong>${total}</strong><span>封</span></div>
+    </div>
+    <div class="status-list">
+      ${rows.map((row, index) => `<span><i style="background:${colors[index % colors.length]}"></i>${escapeHtml(row.status)} ${row.total}</span>`).join('')}
+    </div>
+  `;
+}
+
+function renderBarList(container, rows, labelKey, valueKey, emptyText) {
+  if (!container) return;
+  const max = Math.max(1, ...rows.map(row => Number(row[valueKey] || 0)));
+  if (!rows.length) {
+    container.innerHTML = `<div class="empty-chart">${emptyText}</div>`;
+    return;
+  }
+  container.innerHTML = rows.map(row => {
+    const value = Number(row[valueKey] || 0);
+    const percent = Math.max(4, (value / max) * 100);
+    return `<div class="hbar-row">
+      <div class="hbar-label"><span>${escapeHtml(row[labelKey])}</span><strong>${compactNumber(value)}</strong></div>
+      <div class="hbar-track"><span style="width:${percent}%"></span></div>
+    </div>`;
+  }).join('');
+}
+
+function renderAnalytics(data) {
+  const totals = data.totals || {};
+  if (els.metricUsers) els.metricUsers.textContent = compactNumber(totals.users);
+  if (els.metricMailboxes) els.metricMailboxes.textContent = compactNumber(totals.mailboxes);
+  if (els.metricMessages) els.metricMessages.textContent = compactNumber(totals.messages);
+  if (els.metricSent) els.metricSent.textContent = compactNumber(totals.sent_emails);
+  if (els.metricExpired) els.metricExpired.textContent = compactNumber(totals.expired_mailboxes);
+  renderTrendChart(data);
+  renderGrowthChart(data);
+  renderDonutChart(data);
+  renderBarList(els.chartDomains, data.domain_distribution || [], 'domain', 'total', '暂无域名数据');
+  renderBarList(els.chartTopUsers, data.top_users || [], 'username', 'mailbox_count', '暂无用户邮箱数据');
+}
+
+async function loadAnalytics() {
+  if (els.analyticsLoading) els.analyticsLoading.style.display = 'flex';
+  try {
+    const data = await getAnalytics(analyticsRange);
+    analyticsLoaded = true;
+    renderAnalytics(data);
+  } catch (e) {
+    analyticsLoaded = false;
+    const message = '<div class="empty-chart chart-error">分析数据加载失败</div>';
+    [els.chartTrend, els.chartGrowth, els.chartSentStatus, els.chartDomains, els.chartTopUsers]
+      .forEach(el => { if (el) el.innerHTML = message; });
+    showToast('分析数据加载失败', 'error');
+  } finally {
+    if (els.analyticsLoading) els.analyticsLoading.style.display = 'none';
+  }
 }
 
 // 更新分页
@@ -462,6 +698,16 @@ async function handleUnassignMailbox() {
 els.back?.addEventListener('click', () => history.back());
 els.logout?.addEventListener('click', async () => { try { await api('/api/logout', { method: 'POST' }); } catch(_) {} location.replace('/html/login.html'); });
 els.usersRefresh?.addEventListener('click', loadUsers);
+els.healthRefresh?.addEventListener('click', loadSystemHealth);
+els.navUsers?.addEventListener('click', () => setAdminView('users'));
+els.navAnalytics?.addEventListener('click', () => setAdminView('analytics'));
+els.analyticsRange?.querySelectorAll('[data-range]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    analyticsRange = btn.dataset.range || '30d';
+    els.analyticsRange.querySelectorAll('[data-range]').forEach(item => item.classList.toggle('active', item === btn));
+    loadAnalytics();
+  });
+});
 els.prevPage?.addEventListener('click', () => { if (currentPage > 1) { currentPage--; loadUsers(); }});
 els.nextPage?.addEventListener('click', () => { const totalPages = Math.ceil(totalUsers / pageSize); if (currentPage < totalPages) { currentPage++; loadUsers(); }});
 
@@ -507,3 +753,4 @@ els.mailboxesNextPage?.addEventListener('click', () => { const totalPages = Math
 
 // 初始化
 loadUsers();
+loadSystemHealth();

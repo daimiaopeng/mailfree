@@ -136,6 +136,43 @@ export function buildMockMailboxes(count = 6, pinnedCount = 2, domains = ['examp
   }));
 }
 
+function buildMockAnalytics(range = '30d') {
+  const count = Number(String(range).replace('d', '')) || 30;
+  const days = Array(count).fill(null).map((_, index) => {
+    const date = new Date();
+    date.setDate(date.getDate() - (count - index - 1));
+    return date.toISOString().slice(0, 10);
+  });
+  return {
+    ok: true,
+    mock: true,
+    range,
+    generated_at: new Date().toISOString(),
+    totals: { users: 8, mailboxes: 24, messages: 168, sent_emails: 36, expired_mailboxes: 3 },
+    trend: days.map((day, index) => ({
+      date: day,
+      users: index % 5 === 0 ? 1 : 0,
+      mailboxes: 2 + (index % 4),
+      messages: 8 + ((index * 7) % 18),
+      sent_emails: 1 + (index % 6)
+    })),
+    sent_status: [
+      { status: 'delivered', total: 24 },
+      { status: 'queued', total: 8 },
+      { status: 'failed', total: 4 }
+    ],
+    domain_distribution: [
+      { domain: 'example.com', total: 18 },
+      { domain: 'demo.test', total: 6 }
+    ],
+    top_users: [
+      { id: 1, username: 'guest', mailbox_count: 8 },
+      { id: 2, username: 'operator', mailbox_count: 5 },
+      { id: 3, username: 'tester', mailbox_count: 3 }
+    ]
+  };
+}
+
 /**
  * 模拟 API 请求处理
  * @param {string} path - API 路径
@@ -149,6 +186,27 @@ export async function mockApi(path, options = {}) {
   // GET /api/domains
   if (url.pathname === '/api/domains') {
     return new Response(JSON.stringify(MOCK_STATE.domains), { headers: jsonHeaders });
+  }
+
+  // GET /api/system/health
+  if (url.pathname === '/api/system/health') {
+    return new Response(JSON.stringify({
+      mock: true,
+      ok: true,
+      checked_at: new Date().toISOString(),
+      db_bound: true,
+      r2_bound: true,
+      resend_configured: false,
+      domains: MOCK_STATE.domains,
+      counts: { users: 8, mailboxes: 24, messages: 168, sent_emails: 36, expired_mailboxes: 3 },
+      latest_message_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
+      latest_sent_status: { status: 'delivered', created_at: new Date(Date.now() - 2 * 3600000).toISOString() }
+    }), { headers: jsonHeaders });
+  }
+
+  // GET /api/admin/analytics
+  if (url.pathname === '/api/admin/analytics') {
+    return new Response(JSON.stringify(buildMockAnalytics(url.searchParams.get('range') || '30d')), { headers: jsonHeaders });
   }
 
   // GET /api/generate
